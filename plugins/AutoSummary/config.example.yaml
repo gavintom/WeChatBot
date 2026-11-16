@@ -1,0 +1,82 @@
+# AutoSummary 私有配置样例
+#
+# 用法：把本文件拷成 data/plugins/AutoSummary.yaml，按需修改。
+# 改完**不用重启主服务**，最多 30 秒内生效（框架按 mtime 热读）。
+# 想临时关掉，在后台「插件管理」里禁用插件即可，不用动这个文件。
+
+# 插件自身总开关。false = 插件什么都不做（等价于被禁用，但不动后台状态）。
+enabled: false
+
+# 自动总结：消息里只要有链接、或收到卡片消息就自动总结（不需要敲触发词）。
+# 关掉后只剩显式触发词生效。默认关闭。
+auto_summary: false
+
+# 触发放行：false = 斜杠触发词（/总结、/追问）本身就是唤醒词，识别到直接执行，
+# 群里不需要再 @ 机器人或喊宿主唤醒词（如「小禾」）。默认 false。
+# true = 严格模式，还要宿主策略判定「这条该回」才动手（群里必须 @ 或命中唤醒词）；
+#        注意宿主唤醒词是「小禾」这类，不含 /总结，严格模式下裸发 /总结不会触发。
+# 裸链接 / 卡片的自动总结由 auto_summary 单独控制，与这里无关。
+require_host_trigger: false
+
+# 触发词（开头匹配即可，全部带 / 前缀）。留空则用插件内置默认值。
+summary_triggers:
+  - /总结
+  - /摘要
+  - /帮我总结
+  - /summarize
+  - /summary
+
+qa_triggers:
+  - /追问
+  - /问        # 「/问题…」会被自动排除，不会误触发
+
+# 送给大模型的正文最大长度（字符）。超长截断，防止一次请求过大。
+max_text_length: 6000
+
+# 回复给用户的最大长度（字符）。
+max_reply_chars: 1500
+
+# 会话缓存过期时间（秒）。默认 1800 = 30 分钟。
+# 「总结」不带链接时用最近一条链接；「追问」用最近一次的原文，都在这个窗口内有效。
+# 注意：即使 auto_summary=false，裸链接 / 卡片也会记进「最近链接」，
+#       所以先发链接、再敲「总结」在这个窗口内一定能取回。
+expiration_time: 1800
+
+# 注意：插件回复**不刷新**宿主的「对话延续窗口」。插件是旁路 responder，
+# 发完摘要后，后续消息仍需 @ 机器人或命中唤醒词才会实质触发 AI。
+# 插件自己的「追问 / 问」是独立触发词，不受续聊窗口影响。
+
+# ---- 正文抓取 ----
+# 主路径：本地直接抓 HTML + 标准库解析（不装 beautifulsoup），微信文章优先取
+# #js_content 正文容器。默认走这条，无需任何外部服务的 key。
+fetch_connect_timeout: 5
+fetch_read_timeout: 20
+
+# Jina Reader 兜底：本地抓不到时才试。Jina 免费额度已基本取消，
+# 无 key 时 401 是常态，所以默认关闭；只有填了 key 或确实需要时才打开。
+jina_enabled: false
+jina_base: "https://r.jina.ai/"
+jina_api_key: ""          # 有 Jina key 填上，Jina 兜底成功率才高
+
+# ---- 内置大模型 ----
+# llm_model 留空 = 用后台「AI 大模型」页选定的默认模型（推荐，跟主链路一致）。
+# 想单独指定就在这里填模型名称或上游模型 ID。
+llm_model: ""
+llm_temperature: 0.3
+llm_max_tokens: 0        # 0 = 不限制（用模型自身的上限）
+
+# ---- 黑白名单 ----
+# URL 前缀匹配。white_url_list 非空时，**只有**白名单里的链接会被总结。
+white_url_list: []
+black_url_list:
+  - "https://support.weixin.qq.com"
+  - "https://channels-aladin.wxqcloud.qq.com"
+
+# 私聊用户黑白名单（wxid）。白名单里的用户永远自动总结，黑名单里的永不自动总结。
+white_user_list: []
+black_user_list: []
+
+# 群聊黑白名单（xxx@chatroom）。
+# 写进白名单 = 显式授权本插件在这个群工作（即使宿主没配这个群）。
+white_group_list: []
+black_group_list: []

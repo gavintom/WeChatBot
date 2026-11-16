@@ -1,0 +1,5 @@
+# Linux 容器里执行的 shell 脚本必须是 LF，Windows checkout 不要转成 CRLF
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+# Dockerfile 的 RUN 续行符 "\" 后面若跟 CR 会被当成参数，容器构建直接失败
+Dockerfile text eol=lf

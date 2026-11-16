@@ -1,0 +1,56 @@
+config.yaml
+analytics.db
+analytics.db-*
+*.log
+*.log.[1-9]
+.conversations.json
+.conversations.json.tmp
+.admin_secret
+.admin.pid
+.bridge.pid
+.bridge.state
+.kb_backup/
+.config_backup/
+kb_backup/
+media/
+data/knowledge/.index/
+data/knowledge/images/*
+!data/knowledge/images/.gitkeep
+__pycache__/
+*.pyc
+.venv/
+myenv/
+.DS_Store
+
+# ---- 运行时数据 / 本地工作区（提交 GitHub 时不要带真实密钥与聊天数据）----
+# data/ 下只保留配置模板与目录骨架；数据库、真实配置、日志、备份、业务文档一律不入库
+data/*
+!data/config.yaml.example
+# 只保留目录骨架（images/.gitkeep），业务知识库文档不随仓库分发
+!data/knowledge/
+data/knowledge/*.md
+data/knowledge/*.txt
+# 插件私有配置属于运行时数据，只放行目录骨架；真实 *.yaml 不入库
+!data/plugins/
+data/plugins/*.yaml
+data/plugins/*.yaml.bak
+!data/plugins/.gitkeep
+*.db
+*.db-*
+*.db.bak.*
+.workbuddy/
+tests/.verify-*
+*.pid
+.webhook.pid
+# 浏览器验证产生的临时快照（不属于交付物）
+docs/.playwright-cli/
+
+# 端到端测试临时文档（测试结束会自动删，防御性排除）
+data/knowledge/_verify_*.md
+
+# 模型权重不进 git：models/ 下所有文件与子目录全部排除（官方镜像已内置权重模型；
+# 重排模型需自行下载放到此目录）。三条规则一起写，覆盖目录、目录内任意层级文件，
+# 以及 models 本身是普通文件的边界情况。
+models/
+models/**
+models

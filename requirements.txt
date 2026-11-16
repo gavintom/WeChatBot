@@ -1,0 +1,23 @@
+# —— Web 服务 / 配置 / HTTP ——
+flask>=3.0
+requests>=2.31
+pyyaml>=6.0
+gunicorn>=21.0          # 生产（Windows 本地开发用 python webhook_server.py 即可）
+
+# —— 混合检索（BM25 + 向量 + RRF + 重排）——
+numpy>=1.24
+jieba>=0.42.1
+rank-bm25>=0.2.2
+sentence-transformers>=2.2.2
+torch>=2.0             # 由 sentence-transformers 带入；不装就把 brain.retrieval.use_vector 设 false
+                       # 并把 brain.retrieval.rerank.enabled 设 false（退化为纯 BM25）
+
+# —— 语音：pilk 解码后转 16kHz 单声道 MP3 ——
+imageio-ffmpeg>=0.4.9  # 自带 ffmpeg 二进制，免系统安装（转 MP3 用）
+pilk>=0.0.3            # iOS 微信 SILK_V3 语音解码；缺了语音只能回兜底话术（Docker 已内置）
+
+# —— 知识库文档导入（Word / Excel / PDF → Markdown）+ 图片压缩 ——
+python-docx>=1.1.0
+pymupdf>=1.24.0
+openpyxl>=3.1.0
+pillow>=10.0.0

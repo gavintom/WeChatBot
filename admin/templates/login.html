@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1f18">
+<title>登录 · 微信智能客服管理后台</title>
+<link rel="stylesheet" href="/static/app.css?v=20261114i">
+</head>
+<body class="login-body">
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="brand-mark">AI</div>
+      <div>
+        <h1>微信智能客服管理后台</h1>
+        <p>基于知识库的微信智能客服</p>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" autocomplete="on">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="username">账号</label>
+        <input id="username" name="username" type="text" required autofocus
+               autocomplete="username" value="{{ default_user }}" placeholder="请输入账号">
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" required
+               autocomplete="current-password" placeholder="请输入密码">
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">登 录</button>
+    </form>
+
+    <div class="login-hint">
+      初始账号 <code>{{ default_user }}</code> / 初始密码 <code>admin123</code>，登录后请立即修改。
+    </div>
+  </div>
+</div>
+</body>
+</html>

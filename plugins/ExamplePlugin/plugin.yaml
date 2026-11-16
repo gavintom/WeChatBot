@@ -1,0 +1,13 @@
+name: ExamplePlugin
+version: 1.0.0
+author: WeChatBot
+description: 示例插件：命令回复、直接作答、回答改写、定时任务、扩展路由
+entry: main:ExamplePlugin
+priority: 50
+hooks:
+  - on_message
+  - on_pre_answer
+  - on_post_answer
+  - on_schedule
+  - on_http
+min_host_version: "1.1.0"

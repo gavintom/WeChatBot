@@ -1,0 +1,224 @@
+# 个人微信智能客服系统 · 配置模板
+# 复制为 config.yaml 后填写。改完需重启主服务（后台「配置编辑」页保存后点「重启/重载」）。
+# 文中的 192.0.2.x 是示例地址（RFC 5737 文档网段），部署时请替换为实际 IP。
+# 需要走代理下载模型 / 访问 LLM 时，在启动环境里设：
+#   export HTTPS_PROXY=http://192.0.2.2:7890  HTTP_PROXY=http://192.0.2.2:7890
+
+# ---------------------------------------------------------------- 手机插件（WeChatBotTweak）
+wechat:
+  base_url: "http://192.0.2.71:18888"   # 手机上插件的 HTTP 地址（局域网）
+  token: ""                              # 插件 config.plist 的 token；默认空=不鉴权
+  timeout: 10                            # 普通请求超时（秒）；媒体/发送内部会放大
+  self_wxid: ""                          # 本机微信号；留空自动从 /api/health 的 self 读取
+                                         # 群聊「@ 本机」判断用它，填了更稳（换号记得改）
+
+# ---------------------------------------------------------------- webhook 接收
+webhook:
+  # 接收端校验 token。插件推送时不带自定义 Header，所以把地址配成
+  #   http://<服务器>:29999/webhook?token=你的token
+  # 留空 = 不校验（仅限可信局域网）。
+  token: ""
+  internal_token: ""                     # 后台调 /internal/reload 的令牌；留空复用上面的 token
+  dedup_ttl: 86400                       # 消息去重记录保留秒数（插件可能重复推送）
+  max_msg_age: 600                       # 超过多少秒的旧消息不处理（0=不限）
+
+# ---------------------------------------------------------------- 回复行为
+reply:
+  at_sender: true                        # 群聊回复时 @ 提问者（插件 atstyle=groupat，实测生效）
+  quote_reply: false                     # true=用 /api/send/quote 引用原消息回复（部分版本会短暂掉线）
+  plain_text: true                       # 把 Markdown 降级成微信可读纯文本
+  max_answer_chars: 1000                 # 单条回复字数上限（0=不限）
+  media_need_trigger: true               # 群聊图片/视频是否要触发条件才回「暂不支持」
+                                         # true=命中 @ / 唤醒词 / 对话延续窗口才回，否则静默跳过；
+                                         #     媒体消息本身不带正文 / @，实际主要靠对话延续窗口
+                                         # false=配置表内的群，任何图片/视频都回一句提示（仍过策略）
+  unsupported_reply: "暂不支持图片/视频消息，请发送文字或语音～"
+  interval_seconds: 1                     # 连续回复间隔 0-30 秒，默认 1（0=不等待）
+
+  # ------------------------------------------------ 群聊「对话延续窗口」
+  # 机器人在群里回复后的 3 分钟内（可调 1~30 分钟），同一群友接着
+  # 说话不必再 @ / 命中唤醒词，直接视为这一轮对话的继续；超时后必须重新 @ 或唤醒。
+  # 计时从「回复成功发出」开始，每次回复都会刷新（可连续多轮）。
+  # 作用范围固定为「同一群 + 同一群友」，不提供全群扩散选项（写 scope 也会被忽略）。
+  # 管理端「系统配置 → 群聊对话延续」点「保存并生效」会把下面几项写回本段，立即生效。
+  followup:
+    enabled: true                        # 总开关；false = 回到「每次都要 @ / 唤醒」
+    window_minutes: 3                   # 免 @ 时长（分钟）：1~30，默认 3；越界自动钳制
+    hint_enabled: true                  # 仅 AI 实质回复末尾是否空一行附带续聊提示（提示类消息不带、流水也不记）
+    hint: "（{minutes}分钟内您无需 @/ 唤醒续聊）"  # {minutes} 自动换成窗口分钟数；留空 = 不显示
+
+# ---------------------------------------------------------------- AI 大脑 / 知识库检索
+brain:
+  external_llm:
+    api_key: "sk-xxxx"
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+    temperature: 0.3
+    stream: true
+    connect_timeout: 10
+    read_timeout: 60
+    total_timeout: 240
+    max_tokens: 0
+    partial_min_chars: 20
+    stream_usage: true
+    retries: 2                           # LLM 请求失败后再试 2 次（共 3 次）
+
+  # 模型单价（元 / 百万 token），管理端「AI 用量 / API 调用记录」据此估算费用。
+  # 留空时用内置参考价（只是量级参考），查不到单价的模型显示「未配置」而不是 0 元。
+  # 例：deepseek-chat: {in: 2.0, out: 8.0}；按次计费写 {per_call: 0.01}。
+  # 改完不用重启，下一次统计立刻生效；费用按调用当时的单价存库，历史可核对。
+  llm_pricing: {}
+  memory_limit: 10                       # 每个「会话|发送者」的记忆条数（user+assistant 各算 1）
+  memory_persist: true                   # 落盘 .conversations.json
+  # 留空用内置简洁客服提示词；想改话术写这里
+  system_prompt: >-
+    你是客服助手，解答客户提出的各种问题。
+    回答规则（务必遵守）：
+    1. 只依据「知识库」回答。知识库里没有的，直接说不确定并建议转人工，不要自己编。
+    2. 简洁优先：直接给答案，一般不超过 120 字，能用一句话说清就不用两句。
+    3. 不复述用户的问题，不写"您好""根据知识库""希望对您有帮助"这类开场白和客套话。
+    4. 知识库仅供参考：只提取与问题直接相关的部分，不要整段照抄，无关内容一律不提。
+    5. 需要讲步骤时用「1. 2. 3.」分行列出，每行一句话，最多 5 步。
+    6. 用口语化中文，不要用 # * - 这类 markdown 符号（客户在微信里看到的是纯文本）。 
+
+  retrieval:
+    knowledge_dir: "./data/knowledge"
+    chunk_size: 400
+    chunk_overlap: 80
+    roster_chunk: true                   # 名单式文档（如家族成员名录）按条目切，一人一片；普通文档不受影响
+    top_k: 4
+    recall_k: 20
+    # 默认开启混合检索（BM25 + 向量 + 重排）；无 GPU / 想轻量起步可关掉向量与重排。
+    use_vector: true                     # 改成 false 可退化为纯 BM25（无需 torch）
+    vector_min_score: 0.3
+    # 权重模型随官方镜像内置于 ./models/bge-base-zh-v1.5；重排模型不含在镜像里，
+    # 需要重排时自行下载到 ./models/bge-reranker-base（下载方式见 README）。
+    embedding_model: "./models/bge-base-zh-v1.5"
+    device: ""                           # ""=自动（cuda/mps/cpu）
+    warmup: true
+    rerank:
+      enabled: false                     # 默认关闭：cross-encoder 在无 GPU 机器上每候选 2~3 秒，
+                                         # 16 个候选就要 30~50 秒延迟。只有确认有 GPU、且知识库规模
+                                         # 够大（见 min_chunks）时才改成 true。
+      model: "./models/bge-reranker-base"
+      min_chunks: 1000                   # 片段数不足则自动跳过重排（CPU 上重排极慢，小库用 RRF 融合已够准）；
+                                         # 想强制开启重排就把这里设为 0
+      candidates: 0
+      max_length: 0
+
+  images:                                # 知识库配图：命中后随回答一起发图
+    enabled: true
+    max_images: 1
+    max_candidates: 4
+    auto_fallback: false
+    max_bytes: 2097152
+    send_gap: 0.6
+
+# ---------------------------------------------------------------- 语音识别
+voice:
+  enabled: true
+  mode: "asr"                            # asr=识别后智能应答；reply=只回固定话术
+  provider: "siliconflow"                # siliconflow / dashscope / openai / custom / selfhosted
+  asr_api_key: "sk-xxxx"
+  asr_base_url: "http://192.0.2.207:6001/asr"   # provider=selfhosted 时的完整端点
+  asr_model: ""
+  asr_language: ""
+  # 默认转成 16kHz / 单声道 MP3 再传 ASR（16bit 指 pilk 解出的 PCM，MP3 无位深）。
+  # mp3_bitrate 默认 32k：10 秒约 40KB，比 WAV 小约 8 倍、比旧 64k MP3 小一半。
+  # transcode: false 则把 WAV 原样直传，不依赖 ffmpeg。
+  transcode: true
+  mp3_bitrate: "32k"
+  ffmpeg_path: "ffmpeg"
+  fallback_reply: "不好意思，我这边暂时听不了语音，麻烦您打字发一下～"
+  failed_reply: "抱歉，这条语音没听清，麻烦您再发一次或者直接打字～"
+  # iOS 微信语音是 SILK_V3，可选装 `pip install pilk` 让服务端先解码成 WAV；
+  # 未安装时会尝试 ffmpeg 直解，仍失败则回 failed_reply。
+
+# ---------------------------------------------------------------- 服务
+server:
+  host: "0.0.0.0"
+  port: 29999
+  public_base_url: "http://127.0.0.1:29999"   # /httpapi/query 返回图片签名链接时用
+  log_level: "INFO"
+  threads: 8                             # webhook 后台处理线程数
+
+# ---------------------------------------------------------------- 纯接口模式（保留原项目能力）
+api:
+  enabled: false                         # true 才注册 /httpapi/query 与 /httpapi/image
+  api_key: ""                            # enabled=true 时必填，否则路由不注册
+  max_q_chars: 500
+  rate_limit_per_min: 30
+  rate_window: 60
+  image_mode: "url"                      # url / base64 / both
+  image_url_ttl: 600
+  session_memory: true
+  session_ttl: 1800
+  max_sessions: 500
+  cors_origins: ""
+  plain: false
+  record_usage: true
+  default_policy: "API接口库"          # 留空=全库检索；默认指向系统预置「API接口库」（空策略，不检索任何文档）
+                                         # 单次请求可用 policy=策略名 或 sources=a.md,b.md 覆盖
+
+# ---------------------------------------------------------------- 转人工
+transfer:
+  # 默认人工接待：需要人工介入时，回复会 @ 这个微信号；群聊策略可单独覆盖
+  default_wxid: ""                     # 例如 wxid_zhangsan
+  default_name: "人工客服"             # 显示名（写入 atNames，让 @ 显示正确）
+  # 客户消息命中这些词 = 明确要求转人工（直接回复话术，不再调用大模型）
+  keywords: ["转人工", "人工客服", "找人工", "人工服务", "要真人", "人工处理"]
+  # AI 回答里出现这些标记/表述 = AI 判断需要转人工
+  ai_markers: ["[转人工]", "建议转人工", "联系人工客服", "需要人工", "人工介入"]
+  # 追加到系统提示词的指令，让模型主动判断是否需要人工
+  ai_instruction: >-
+    若判断该问题需要人工介入（投诉、退款、账号异常、知识库无法回答、客户明确要真人等），
+    请在回答末尾另起一行只写 [转人工]，不要解释这个标记。
+  reply: "已为您转接人工，请稍候～"     # 支持 {name} 占位，会替换成人工接待昵称
+  private_reply: "请联系人工客服 {name} 咨询或电话咨询。"  # 私聊转人工话术；私聊不 @ 任何人
+  keep_at_sender: false               # true = 转人工时同时 @ 提问者和人工接待
+
+# ---------------------------------------------------------------- 聊天记录库
+# 单独一个 SQLite 文件，只存插件推送的原始聊天消息；与 analytics.db 互不影响。
+chat_log:
+  enabled: true                      # 是否归档聊天消息
+  retention_months: 3                # 保留 1~12 个月（按月折算 30 天），超范围自动钳制
+  db_path: "./data/chatlog.db"            # 独立数据库文件；改路径需重启主服务
+  purge_interval_hours: 6            # 定时清理间隔（小时），启动时也会立即清一次
+
+# ---------------------------------------------------------------- Web 管理端
+admin:
+  host: "0.0.0.0"
+  port: 7780
+  main_service: "http://127.0.0.1:29999"  # 后台调用 /internal/reload、/healthz 用
+  # 管理端「启动主服务」用的命令。留空 = <当前 Python> webhook_server.py
+  # 生产可改成 gunicorn：gunicorn -c gunicorn.conf.py webhook_server:app
+  # 也可写成数组：["python3", "webhook_server.py"]
+  start_command: ""
+
+# ---------------------------------------------------------------- 插件系统
+# 默认关闭：不配置 / enabled=false 时，消息链路与插件系统上线前完全一致。
+# 插件代码放项目根 plugins/（随版本分发），私有配置放 data/plugins/（随卷持久化）。
+plugins:
+  enabled: false                      # 总开关；true 才会扫描并加载插件
+  dir: "plugins"                      # 内置插件目录（相对项目根）
+  extra_dir: "data/plugins/third_party"  # 可选：自行投放的第三方插件；不存在会自动跳过
+  config_dir: "data/plugins"           # 私有配置 <插件名>.yaml，mtime 变化即时生效
+                                       # 同目录下的 _tasks.yaml 由后台「插件管理 → 定时任务」维护，
+                                       # 管理端写、主服务按 mtime 热读，不要手工改到一半
+  fail_threshold: 5                   # 连续异常多少次自动熔断禁用
+  # ---- P3 定时任务：单 daemon tick 线程，只在主服务进程里跑一份 ----
+  scheduler:
+    enabled: true                     # 跟随总开关；关掉后连调度线程都不启动
+    tick_seconds: 1                   # 判定间隔 0.2~10 秒，不影响消息线程
+    max_workers: 2                    # 任务执行池；慢任务不会卡住 tick
+    utc_offset: 8                     # daily 任务的时区；不填则用系统本地时区
+  # ---- P3 插件扩展路由 /ext/<插件名>/<路径>：默认关闭，务必谨慎开启 ----
+  http_routes:
+    enabled: false                    # 29999 端口多一个入口；确认只暴露内网再开
+    require_internal_token: true      # 开启后强制 X-Internal-Token，不要改成 false
+    max_body: 65536                   # 请求体上限（字节），最大 1MB
+  # 改这个段里的路径 / 开关需要重启主服务；启停单个插件与改优先级走
+  # /internal/plugins/state，不需要重启（状态存在 analytics.db 的 plugins 表）。
+  # 定时任务周期若用 @schedule(config_key=...) 声明，改私有配置即可热生效。
+  # 后台「插件管理 → 定时任务」可改周期 / 启停 / 复制实例 / 删除，写入
+  # _tasks.yaml 后最多一个 tick 生效，无需重启或重载注册表。

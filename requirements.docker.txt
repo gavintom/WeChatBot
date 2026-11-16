@@ -1,0 +1,31 @@
+# Docker 镜像依赖清单。
+#
+# 重依赖 torch / sentence-transformers 由 Dockerfile 的 INSTALL_VECTOR 开关安装，
+# 默认 INSTALL_VECTOR=1 —— 配置已默认开启混合检索，镜像构建出来直接可用。
+# 想要纯 BM25 的精简镜像：docker build --build-arg INSTALL_VECTOR=0 -t wxbot .
+# 此时 brain.py 缺依赖会自动降级、不会启动失败，但配置仍是 true，按需关掉即可。
+# torch 用 CPU-only wheel（容器无 GPU）：从 PyPI 装默认版会连带拉整套 CUDA 13，
+# 镜像数 GB 且下载常超时；CPU 版约 200MB。pip 另加了超时与重试参数。
+#
+# pilk（SILK_V3 语音解码）不放在这份 -r 清单里：PyPI 只有 Windows wheel，
+# Linux 必须源码编译，而最终镜像不含 gcc。改由 Dockerfile 的 wheel-builder
+# 阶段编出 Linux wheel 后单独安装，并在构建期校验可导入（见 Dockerfile）。
+# 缺了 pilk 微信语音无法解码，只能回 voice.failed_reply。
+
+# —— Web 服务 / 配置 / HTTP ——
+flask>=3.0
+requests>=2.31
+pyyaml>=6.0
+gunicorn>=21.0
+
+# —— 混合检索（BM25 + 向量 + RRF，向量重依赖见 Dockerfile）——
+numpy>=1.24
+jieba>=0.42.1
+rank-bm25>=0.2.2
+
+# —— 语音转码 / 知识库文档导入 / 图片 ——
+imageio-ffmpeg>=0.4.9
+python-docx>=1.1.0
+pymupdf>=1.24.0
+openpyxl>=3.1.0
+pillow>=10.0.0

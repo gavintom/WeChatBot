@@ -1,0 +1,10 @@
+name: AutoSummary
+version: 1.0.0
+author: WeChatBot
+description: 自动总结微信里的网页链接与卡片消息（宿主内置大模型，不依赖外部 AI 服务）
+entry: main:AutoSummary
+priority: 80
+hooks:
+  - on_message
+  - on_post_resolve
+min_host_version: "1.1.0"

@@ -1,0 +1,61 @@
+# 不要把本机数据 / 密钥 / 缓存打进镜像。
+# data/ 是运行时卷：只把配置模板与知识库目录骨架放进构建上下文，其余数据一律排除。
+# 父目录不能整体排除（否则 ! 例外不生效），所以用 data/* 而不是 data/。
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 含真实密钥的本机配置：镜像里只保留 data/config.yaml.example 模板
+config.yaml
+# 管理端 Flask 会话签名密钥：随镜像分发等于把会话签名能力一起交出去。
+# 排除后容器首次启动会自己生成一份随机密钥（只影响已有会话需重新登录）。
+.admin_secret
+.admin.pid
+.bridge.pid
+.bridge.state
+.workbuddy/
+.kb_backup/
+.config_backup/
+kb_backup/
+media/
+data/*
+!data/config.yaml.example
+# 只放行知识库目录骨架（images/.gitkeep），父目录不能整体排除
+!data/knowledge/
+!data/knowledge/**
+# 插件配置目录只放行骨架 .gitkeep；真实私有配置与运行时状态（含 .bak）一律不进镜像
+!data/plugins/
+!data/plugins/**
+data/plugins/*
+!data/plugins/.gitkeep
+# 业务文档 / 向量缓存 / 测试临时文档一律不进镜像
+data/knowledge/*.md
+data/knowledge/*.txt
+data/knowledge/.index/
+data/knowledge/_verify_*.md
+# 知识库图片同属运行时业务数据，只保留目录骨架（约 48MB 不进镜像）
+data/knowledge/images/*
+!data/knowledge/images/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+*.db.bak.*
+*.log
+.config_backup/
+.conversations.json
+.webhook.pid
+
+# models/ 权重模型不排除：官方镜像会随 COPY . /app 内置权重模型，构建期 test -f 校验；
+# 重排模型需自行下载放到本地 models/ 目录后再构建
+
+# 测试产物
+tests/*.log
+tests/*.db
+tests/*.db-wal
+tests/*.db-shm
+tests/.verify-*
+.coverage

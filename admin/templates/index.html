@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1f18">
+<title>微信智能客服 · 管理后台 {{ app_version }}</title>
+<link rel="stylesheet" href="/static/app.css?v=20261116d">
+</head>
+<body>
+<!-- 移动端抽屉遮罩：桌面由 CSS 隐藏；点它 / 按 Esc / 切换页面都会收起侧栏 -->
+<div class="sidebar-mask" id="sidebarMask"></div>
+<div class="layout">
+  <aside class="sidebar" id="mainSidebar">
+    <div class="logo">
+      <div class="brand-mark sm">AI</div>
+      <div class="logo-text">
+        <div class="logo-title"><strong>微信智能客服</strong></div>
+        <div class="logo-sub"><span>管理后台</span><span class="app-version">{{ app_version }}</span></div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="nav-item active" data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg><span>运行监控</span></a>
+
+      <div class="nav-group">
+        <button type="button" class="nav-item nav-parent" data-group-toggle="logs"><svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h18v2H3v-2z"/></svg><span>日志管理</span><i class="nav-arrow">▾</i></button>
+        <div class="nav-sub hidden" data-sub="logs">
+          <a class="nav-item nav-child" data-view="records"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4V4zm0 5h16v2H4V9zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/></svg><span>对话记录</span></a>
+          <a class="nav-item nav-child" data-view="apicalls"><svg viewBox="0 0 24 24"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zm0 14H4V8h16v10zM7 5h2v2H7V5zm4 0h2v2h-2V5z"/></svg><span>API 记录</span></a>
+          <a class="nav-item nav-child" data-view="llm"><svg viewBox="0 0 24 24"><path d="M5 3h3v18H5V3zm5 5h3v13h-3V8zm5-3h3v16h-3V5zm5 6h2v7h-2v-7z"/></svg><span>AI 用量</span></a>
+          <a class="nav-item nav-child" data-view="chatlog"><svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 00-2 2v18l4-4h14a2 2 0 002-2V4a2 2 0 00-2-2zm0 14H5.2L4 17.2V4h16v12zM7 7h10v2H7V7zm0 4h7v2H7v-2z"/></svg><span>聊天记录</span></a>
+          <a class="nav-item nav-child" data-view="logs"><svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h18v2H3v-2z"/></svg><span>运行日志</span></a>
+        </div>
+      </div>
+
+      <a class="nav-item" data-view="contacts"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 3a3 3 0 110 6 3 3 0 010-6zm0 15a8 8 0 01-6.3-3.1c.1-2 4-3.1 6.3-3.1s6.2 1.1 6.3 3.1A8 8 0 0112 20z"/></svg><span>通讯录管理</span></a>
+
+      <div class="nav-group">
+        <button type="button" class="nav-item nav-parent" data-group-toggle="kb"><svg viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5-10-5zm0 7.2L4.6 6.5 12 4.2l7.4 2.3L12 10.2zM4 12v6.5l8 4 8-4V12l-8 4-8-4z"/></svg><span>知识库</span><i class="nav-arrow">▾</i></button>
+        <div class="nav-sub hidden" data-sub="kb">
+          <a class="nav-item nav-child" data-view="policies"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg><span>知识库管理</span></a>
+          <a class="nav-item nav-child" data-view="knowledge"><svg viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5-10-5zm0 7.2L4.6 6.5 12 4.2l7.4 2.3L12 10.2zM4 12v6.5l8 4 8-4V12l-8 4-8-4z"/></svg><span>知识库文档</span></a>
+        </div>
+      </div>
+
+      <a class="nav-item" data-view="plugins"><svg viewBox="0 0 24 24"><path d="M20.5 11H19V7a2 2 0 00-2-2h-4V3.5a2.5 2.5 0 00-5 0V5H4a2 2 0 00-2 2v3.5h1.5a2.5 2.5 0 010 5H2V19a2 2 0 002 2h3.5v-1.5a2.5 2.5 0 015 0V21H17a2 2 0 002-2v-4h1.5a2.5 2.5 0 000-5z"/></svg><span>插件管理</span></a>
+      <a class="nav-item" data-view="moments"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 3a1.6 1.6 0 110 3.2A1.6 1.6 0 0112 5zm-5 12.5c.1-2.1 3.3-3.2 5-3.2s4.9 1.1 5 3.2A8 8 0 0112 20a8 8 0 01-5-2.5zM4.6 10.4l1.7.8a7.6 7.6 0 001.3 2.4l-.4 1.8 1.6 1.1 1.5-1.1a8 8 0 002.4 0l1.5 1.1 1.6-1.1-.4-1.8a7.6 7.6 0 001.3-2.4l1.7-.8-.7-1.8-1.8.3a7.5 7.5 0 00-2-1.2L13.5 4h-3l-.5 2.7a7.5 7.5 0 00-2 1.2l-1.8-.3-.6 1.8z"/></svg><span>朋友圈</span></a>
+
+      <div class="nav-group">
+        <button type="button" class="nav-item nav-parent" data-group-toggle="system"><svg viewBox="0 0 24 24"><path d="M19.1 12.9a7 7 0 000-1.8l2-1.6-2-3.4-2.4 1a7 7 0 00-1.6-.9l-.4-2.6h-3.9l-.4 2.6c-.6.2-1.1.5-1.6.9l-2.4-1-2 3.4 2 1.6a7 7 0 000 1.8l-2 1.6 2 3.4 2.4-1c.5.4 1 .7 1.6.9l.4 2.6h3.9l.4-2.6c.6-.2 1.1-.5 1.6-.9l2.4 1 2-3.4-2-1.6zM12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7z"/></svg><span>系统管理</span><i class="nav-arrow">▾</i></button>
+        <div class="nav-sub hidden" data-sub="system">
+          <a class="nav-item nav-child" data-view="groups"><svg viewBox="0 0 24 24"><path d="M16 11a4 4 0 10-4-4 4 4 0 004 4zm-8 0a3 3 0 10-3-3 3 3 0 003 3zm0 2c-2.7 0-6 1.3-6 4v3h9v-3c0-1 .4-1.9 1-2.6A12 12 0 008 13zm8 0c-2.7 0-8 1.3-8 4v3h16v-3c0-2.7-5.3-4-8-4z"/></svg><span>群聊配置</span></a>
+          <a class="nav-item nav-child" data-view="private"><svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 10-5-5 5 5 0 005 5zm0 2c-4 0-9 2-9 6v2h18v-2c0-4-5-6-9-6z"/></svg><span>私聊配置</span></a>
+          <a class="nav-item nav-child" data-view="config"><svg viewBox="0 0 24 24"><path d="M19.1 12.9a7 7 0 000-1.8l2-1.6-2-3.4-2.4 1a7 7 0 00-1.6-.9l-.4-2.6h-3.9l-.4 2.6c-.6.2-1.1.5-1.6.9l-2.4-1-2 3.4 2 1.6a7 7 0 000 1.8l-2 1.6 2 3.4 2.4-1c.5.4 1 .7 1.6.9l.4 2.6h3.9l.4-2.6c.6-.2 1.1-.5 1.6-.9l2.4 1 2-3.4-2-1.6zM12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7z"/></svg><span>系统配置</span></a>
+          <a class="nav-item nav-child" data-view="models"><svg viewBox="0 0 24 24"><path d="M12 2a9 9 0 00-9 9v7a2 2 0 002 2h14a2 2 0 002-2v-7a9 9 0 00-9-9zm0 3a6 6 0 016 6v1H6v-1a6 6 0 016-6zM7 15h10v3H7v-3z"/></svg><span>AI 大模型</span></a>
+        </div>
+      </div>
+
+      <a class="nav-item" data-view="system"><svg viewBox="0 0 24 24"><path d="M20 13H8l5-9 7 12h-5v6h5v2H4v-2h5v-6H4l6-9 5 9h5z"/></svg><span>系统信息</span></a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="mini-status" id="miniStatus"><span class="dot dot-gray"></span><span class="mini-status-text">加载中…</span></div>
+      <div class="user-row" id="userRow">
+        <div class="avatar">{{ username[0]|upper }}</div>
+        <div class="user-meta"><strong>{{ username }}</strong><span>点击修改密码</span></div>
+      </div>
+      <form id="logoutForm" method="post" action="/logout" class="logout-form">
+        <button type="submit" class="btn btn-ghost btn-sm btn-logout" id="btnLogout">退出登录</button>
+      </form>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button type="button" class="menu-toggle" id="btnMenu"
+              aria-label="打开导航菜单" aria-expanded="false" aria-controls="mainSidebar">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="topbar-main"><h2 id="viewTitle">运行监控</h2><p id="viewSub" class="muted">服务状态与对话统计</p></div>
+      <div class="topbar-right"><span class="last-update" id="lastUpdate"></span>
+        <button class="btn btn-ghost btn-sm" id="btnRefresh">刷新</button></div>
+    </header>
+
+    <div class="content">
+      <!-- ================= 运行监控 ================= -->
+      <section class="view" id="view-dashboard">
+        <div class="card">
+          <div class="card-head"><h3>主服务进程控制</h3><span class="count-pill" id="svcState">检测中</span></div>
+          <div class="kv-list" id="svcInfo"></div>
+          <div class="service-actions" style="flex-wrap:wrap;margin-top:16px">
+            <button class="btn btn-primary btn-sm" id="btnSvcStart">启动主服务</button>
+            <button class="btn btn-ghost btn-sm" id="btnSvcRestart">重启</button>
+            <button class="btn btn-warn btn-sm" id="btnSvcStop">停止</button>
+            <button class="btn btn-ghost btn-sm" id="btnSvcRefresh">刷新状态</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>知识库接口（/httpapi/query）</h3><span class="count-pill" id="apiSvcState">检测中</span></div>
+          <div class="kv-list" id="apiSvcInfo"></div>
+          <div class="service-actions" style="flex-wrap:wrap;margin-top:16px">
+            <button class="btn btn-primary btn-sm" id="btnApiStart">启动</button>
+            <button class="btn btn-ghost btn-sm" id="btnApiRestart">重启</button>
+            <button class="btn btn-warn btn-sm" id="btnApiStop">停止</button>
+            <button class="btn btn-ghost btn-sm" id="btnApiRefresh">刷新状态</button>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="card"><div class="card-head"><h3>主服务</h3><span class="count-pill" id="dashMainState">检测中</span></div>
+            <div class="kv-list" id="dashMain"></div></div>
+          <div class="card"><div class="card-head"><h3>手机插件（个人微信）</h3>
+            <div class="card-pills">
+              <span class="count-pill" id="dashPluginState">检测中</span>
+              <span class="count-pill" id="dashLicenseState">授权检测中</span>
+            </div></div>
+            <div class="kv-list" id="dashPlugin"></div>
+            <form id="activateForm" class="activate-form" autocomplete="off">
+              <label for="activateCode">激活码</label>
+              <input type="text" id="activateCode" required autocomplete="off"
+                     spellcheck="false" placeholder="粘贴激活码（不可为空）">
+              <button type="submit" class="btn btn-primary btn-sm" id="btnActivate">激活</button>
+            </form>
+            <div class="license-hint">空激活码不会提交：插件协议中空码表示「清除授权回到试用」，本后台不提供清除入口。授权过期后接口不可达，需在微信内 我 → 设置 → WeChatBot → 状态与测试 重新激活。</div>
+          </div>
+        </div>
+        <div class="stat-grid" style="margin-top:18px">
+          <div class="stat-card"><div class="stat-label">今日消息</div><div class="stat-value" id="stTotal">—</div><div class="stat-foot">不含跳过与不支持的消息</div></div>
+          <div class="stat-card"><div class="stat-label">AI 回复</div><div class="stat-value" id="stReplies">—</div><div class="stat-foot">平均耗时 <span id="stAvg">—</span></div></div>
+          <div class="stat-card"><div class="stat-label">群聊 / 私聊</div><div class="stat-value" id="stGroupPrivate">—</div><div class="stat-foot">今日有效回复</div></div>
+          <div class="stat-card"><div class="stat-label">知识库 / 文档</div><div class="stat-value" id="stPolicyDocs">—</div><div class="stat-foot">群 <span id="stGroups">—</span> · 私聊 <span id="stPrivate">—</span></div></div>
+        </div>
+        <div class="card" style="margin-top:18px">
+          <div class="card-head">
+            <div><h3>最近 30 天对话趋势</h3><p class="muted">按日统计 AI 回复数与转人工数</p></div>
+            <div class="range-picker" id="rangePicker">
+              <button class="chip" data-days="7">7 天</button>
+              <button class="chip active" data-days="30">30 天</button>
+              <button class="chip" data-days="90">90 天</button>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="chartDaily"></canvas></div>
+        </div>
+        <div class="two-col chart-col" style="margin-top:14px">
+          <div class="card"><div class="card-head"><h3>每日 AI 回复</h3></div>
+            <div class="chart-box short"><canvas id="doneChart"></canvas></div></div>
+          <div class="card"><div class="card-head"><h3>每日转人工</h3></div>
+            <div class="chart-box short"><canvas id="transChart"></canvas></div></div>
+        </div>
+        <!-- 知识库 HTTP 接口的调用趋势，与微信对话分开画：量级、用途、计费都不同，
+             叠在一张图上会把微信那条线压平。 -->
+        <div class="card" style="margin-top:14px">
+          <div class="card-head">
+            <div><h3>知识库接口调用趋势</h3><p class="muted">POST /httpapi/query 的调用量与失败数（不含微信对话）</p></div>
+          </div>
+          <div class="chart-box"><canvas id="apiCallChart"></canvas></div>
+        </div>
+        <div class="two-col chart-col" style="margin-top:14px">
+          <div class="card"><div class="card-head"><h3>接口 token 消耗</h3></div>
+            <div class="chart-box short"><canvas id="apiTokenChart"></canvas></div></div>
+          <div class="card"><div class="card-head"><h3>接口平均耗时</h3><p class="muted">秒 · 每次调用平均消耗</p></div>
+            <div class="chart-box short"><canvas id="apiLatencyChart"></canvas></div></div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-head"><h3>快捷操作</h3></div>
+          <div class="service-actions">
+            <button class="btn btn-primary" id="btnSetHook">把 webhook 地址写入手机插件</button>
+            <button class="btn btn-ghost" id="btnSyncContacts">同步通讯录</button>
+            <button class="btn btn-ghost" id="btnReloadIndex">重建索引并重载</button>
+            <button class="btn btn-ghost" id="btnSyncDocs">同步新文档到所有知识库</button>
+          </div>
+          <div class="cfg-hint" style="margin-top:14px">建议推送地址：<code id="hookSuggest">—</code><br>
+            在手机插件设置页把 webhook 填成这个地址；上面的按钮可以直接替你写入。</div>
+        </div>
+      </section>
+
+      <!-- ================= 对话记录 ================= -->
+      <section class="view hidden" id="view-records">
+        <div class="card">
+          <div class="card-head"><h3>对话记录 <span class="count-pill" id="recTotal">0</span></h3></div>
+          <div class="filter-bar filter-inline">
+            <div class="filter-item"><label>开始</label><input type="date" id="recStart"></div>
+            <div class="filter-item"><label>结束</label><input type="date" id="recEnd"></div>
+            <div class="filter-item"><label>类型</label><select id="recKind"><option value="">全部</option><option value="reply">AI 回复</option><option value="transfer">转人工</option><option value="error">错误</option></select></div>
+            <div class="filter-item"><label>场景</label><select id="recChatType"><option value="">全部</option><option value="group">群聊</option><option value="private">私聊</option></select></div>
+            <div class="filter-item"><label>关键词</label><input type="text" id="recKeyword" placeholder="提问 / 回复 / 昵称"></div>
+            <div class="filter-actions">
+              <button class="btn btn-primary btn-sm" id="btnRecSearch">查询</button>
+              <button class="btn btn-ghost btn-sm" id="btnRecReset">重置</button>
+              <button class="btn btn-ghost btn-sm" id="btnRecExport">导出 CSV</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table tbl-records"><thead><tr><th>时间</th><th>会话</th><th>发送者</th><th>类型</th><th>结果</th><th>知识库 / 触发</th><th>插件</th><th>提问</th><th>回复 / 原因</th><th>耗时</th><th>配图</th></tr></thead><tbody id="recBody"></tbody></table></div>
+          <div class="pager"><button class="btn btn-ghost btn-sm" id="recPrev">上一页</button><span id="recPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="recNext">下一页</button></div>
+        </div>
+      </section>
+
+      <!-- ================= 聊天记录（独立消息库） ================= -->
+      <section class="view hidden" id="view-chatlog">
+        <div class="card">
+          <div class="card-head"><h3>聊天记录归档</h3><span class="count-pill" id="chatTotal">0</span></div>
+          <div class="kv-list" id="chatStats"></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><h3>消息查询</h3><span class="muted">原始消息存于独立数据库，与业务统计库分开</span></div>
+          <div class="filter-bar filter-inline chat-filters">
+            <div class="filter-item"><label>开始</label><input type="date" id="chatStart"></div>
+            <div class="filter-item"><label>结束</label><input type="date" id="chatEnd"></div>
+            <div class="filter-item"><label>场景</label><select id="chatType"><option value="">全部</option><option value="group">群聊</option><option value="private">私聊</option></select></div>
+            <div class="filter-item"><label>会话/发送者</label><input type="text" id="chatWho" placeholder="wxid / 昵称 / 群名"></div>
+            <div class="filter-item"><label>正文关键词</label><input type="text" id="chatKeyword" placeholder="消息内容"></div>
+            <div class="filter-item"><label>消息类型</label><select id="chatMsgType"><option value="">全部</option><option value="1">文本</option><option value="3">图片</option><option value="34">语音</option><option value="43">视频</option><option value="49">应用消息</option><option value="other">其它</option></select></div>
+            <div class="filter-item"><label>方向</label><select id="chatDirection"><option value="">全部</option><option value="in">收到</option><option value="out">发出</option></select></div>
+            <div class="filter-actions">
+              <button class="btn btn-primary btn-sm" id="btnChatSearch">查询</button>
+              <button class="btn btn-ghost btn-sm" id="btnChatReset">重置</button>
+              <button class="btn btn-ghost btn-sm" id="btnChatExport">导出 CSV</button>
+              <button class="btn btn-warn btn-sm" id="btnChatPurge">清理过期</button>
+            </div>
+          </div>
+          <!-- 单行表格：列名常驻，每条消息一行；列不换行，超出靠水平滚动条查看 -->
+          <div class="chat-scroll"><table class="table chat-table"><thead><tr>
+            <th>时间</th><th>场景</th><th>会话</th><th>发送者</th>
+            <th>方向</th><th>消息类型</th><th>@</th><th>正文</th>
+          </tr></thead><tbody id="chatBody"></tbody></table></div>
+          <div class="pager"><button class="btn btn-ghost btn-sm" id="chatPrev">上一页</button><span id="chatPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="chatNext">下一页</button></div>
+        </div>
+      </section>
+
+      <!-- ================= AI 用量（大模型使用记录） ================= -->
+      <section class="view hidden" id="view-llm">
+        <div class="stat-grid">
+          <div class="stat-card c-blue"><div class="stat-label">今日调用</div><div class="stat-value" id="llmTodayCalls">—</div><div class="stat-foot" id="llmTodayFoot">今日 token —</div></div>
+          <div class="stat-card c-green"><div class="stat-label">区间调用</div><div class="stat-value" id="llmCalls">—</div><div class="stat-foot" id="llmSuccessFoot">成功 — · 失败 —</div></div>
+          <div class="stat-card c-amber"><div class="stat-label">消耗 token</div><div class="stat-value" id="llmTokens">—</div><div class="stat-foot" id="llmTokenFoot">输入 — · 输出 —</div></div>
+          <div class="stat-card c-purple"><div class="stat-label">估算费用</div><div class="stat-value" id="llmCost">—</div><div class="stat-foot" id="llmCostFoot">按配置单价估算，仅供参考</div></div>
+        </div>
+        <div class="llm-scope">
+          <div class="llm-scope-cond"><strong>当前筛选结果合计</strong>
+            <span class="muted" id="llmScopeCond">全部模型 · 全部日期</span></div>
+          <div class="llm-scope-nums">
+            <span>调用 <b id="llmScopeCalls">0</b></span>
+            <span>输入 <b id="llmScopeIn">0</b></span>
+            <span>输出 <b id="llmScopeOut">0</b></span>
+            <span>合计 <b id="llmScopeTokens">0</b> token</span>
+            <span>估算费用 <b id="llmScopeCost">¥0</b></span>
+          </div>
+        </div>
+        <div class="alert alert-warn hidden" id="llmUnpricedHint"></div>
+        <div class="card">
+          <div class="card-head"><h3>每日用量趋势</h3><span class="muted">最近 <b id="llmDaysLabel">30</b> 天 · 调用次数 / token（随筛选联动）</span></div>
+          <div class="chart-box short"><canvas id="chartLlm"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>模型库 · 用量对照</h3><span class="muted">以「AI 大模型」页纳管的模型为主体（含零用量模型），点名称可下钻筛选；<b>未纳管 / 历史</b>流水单独一组；单价来自 config.yaml → brain.llm_pricing</span></div>
+          <div class="table-wrap"><table class="table" id="llmCompareTable"><thead><tr>
+            <th>模型库名称</th><th>供应商</th><th>上游模型 ID</th><th>状态</th>
+            <th>调用</th><th>输入 token</th><th>输出 token</th><th>总 token</th>
+            <th>token 占比</th><th>费用(元)</th><th>平均耗时</th><th>单价</th>
+          </tr></thead><tbody id="llmModelBody"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>大模型调用明细 <span class="count-pill" id="llmTotal">0</span></h3></div>
+          <div class="filter-bar filter-inline">
+            <div class="filter-item"><label>开始</label><input type="date" id="llmStart"></div>
+            <div class="filter-item"><label>结束</label><input type="date" id="llmEnd"></div>
+            <div class="filter-item"><label>模型</label><select id="llmModel"><option value="">全部模型</option></select></div>
+            <div class="filter-item"><label>趋势天数</label><select id="llmDays"><option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option></select></div>
+            <div class="filter-actions">
+              <button class="btn btn-primary btn-sm" id="btnLlmSearch">查询</button>
+              <button class="btn btn-ghost btn-sm" id="btnLlmReset">重置</button>
+              <button class="btn btn-ghost btn-sm" id="btnLlmExport">导出 CSV</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模型</th><th>来源</th><th>输入</th><th>输出</th><th>总 token</th><th>费用(元)</th><th>耗时</th><th>方式</th><th>结果</th></tr></thead><tbody id="llmBody"></tbody></table></div>
+          <div class="pager"><button class="btn btn-ghost btn-sm" id="llmPrev">上一页</button><span id="llmPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="llmNext">下一页</button></div>
+        </div>
+      </section>
+
+      <!-- ================= HTTP API 调用记录 ================= -->
+      <section class="view hidden" id="view-apicalls">
+        <div class="stat-grid">
+          <div class="stat-card c-blue"><div class="stat-label">总调用</div><div class="stat-value" id="apiCalls">—</div><div class="stat-foot" id="apiSessionFoot">会话 — · 来源 IP —</div></div>
+          <div class="stat-card c-green"><div class="stat-label">成功 / 失败</div><div class="stat-value" id="apiOkFail">—</div><div class="stat-foot" id="apiRateFoot">成功率 —</div></div>
+          <div class="stat-card c-amber"><div class="stat-label">平均耗时</div><div class="stat-value" id="apiLatency">—</div><div class="stat-foot" id="apiTokenFoot">平均提问 — 字 · token —</div></div>
+          <div class="stat-card c-purple"><div class="stat-label">估算费用</div><div class="stat-value" id="apiCost">—</div><div class="stat-foot" id="apiCostFoot">含图片 — 张 · LLM 调用 — 次</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>每日调用趋势</h3>
+            <div class="row-gap">
+              <span class="muted">最近 <b id="apiDaysLabel">30</b> 天 · 成功 / 失败</span>
+              <select id="apiDays" style="min-width:110px"><option value="7">近 7 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option></select>
+            </div>
+          </div>
+          <div class="chart-box short"><canvas id="chartApi"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>失败原因分布</h3><span class="muted">鉴权失败 / 限流 / 参数错误等也会留痕</span></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>失败原因</th><th>次数</th><th>占比</th></tr></thead><tbody id="apiErrorBody"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>接口调用明细 <span class="count-pill" id="apiTotal">0</span></h3></div>
+          <div class="filter-bar filter-inline">
+            <div class="filter-item"><label>开始</label><input type="date" id="apiStart"></div>
+            <div class="filter-item"><label>结束</label><input type="date" id="apiEnd"></div>
+            <div class="filter-item"><label>关键词</label><input type="text" id="apiKeyword" placeholder="提问 / 答案 / 会话 / IP / 错误"></div>
+            <div class="filter-item"><label>结果</label><select id="apiOnlyFailed"><option value="">全部</option><option value="1">只看失败</option></select></div>
+            <div class="filter-actions">
+              <button class="btn btn-primary btn-sm" id="btnApiSearch">查询</button>
+              <button class="btn btn-ghost btn-sm" id="btnApiReset">重置</button>
+              <button class="btn btn-ghost btn-sm" id="btnApiExport">导出 CSV</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>结果</th><th>提问</th><th>答案 / 失败原因</th><th>状态</th><th>耗时</th><th>token</th><th>费用(元)</th><th>会话 / IP</th><th>图</th></tr></thead><tbody id="apiBody"></tbody></table></div>
+          <div class="pager"><button class="btn btn-ghost btn-sm" id="apiPrev">上一页</button><span id="apiPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="apiNext">下一页</button></div>
+        </div>
+      </section>
+
+      <!-- ================= 群聊配置 ================= -->
+      <section class="view hidden" id="view-groups">
+        <div class="card"><div class="card-head"><h3>群聊配置 <span class="count-pill" id="grpTotal">0</span></h3>
+          <div class="row-gap"><button class="btn btn-ghost btn-sm" id="btnGrpSync">同步群列表</button><button class="btn btn-primary btn-sm" id="btnGrpNew">新建配置</button></div></div>
+          <div class="alert alert-info">只有列在表内的群才会被处理；群内消息需 <b>@ 本机微信号</b> 或命中该群唤醒词才触发智能应答；只检索该配置绑定的知识库配置包含的文档。每条配置还能单独关闭 <b>知识库</b>（跳过检索）或 <b>转人工</b>（忽略关键词与 AI 标记，直接回复）。</div>
+          <div class="table-wrap"><table class="table" id="grpTable"><thead><tr><th data-sort="group_name">群聊</th><th data-sort="group_id">群 ID</th><th data-sort="wake_words">唤醒词</th><th data-sort="policy_name">知识库配置</th><th data-sort="docs">文档数</th><th data-sort="system_prompt">提示词</th><th data-sort="human_wxid">人工接待</th><th data-sort="enabled">状态</th><th>操作</th></tr></thead><tbody id="grpBody"></tbody></table></div></div>
+      </section>
+
+      <!-- ================= 私聊配置 ================= -->
+      <section class="view hidden" id="view-private">
+        <div class="card"><div class="card-head"><h3>全局黑名单</h3><div class="row-gap"><button class="btn btn-primary btn-sm" id="btnDenySave">保存</button></div></div>
+          <div class="field" style="margin-bottom:8px"><label>wxid 或昵称（逗号 / 换行分隔；命中一律不回复，优先级最高）</label><textarea id="globalDeny" rows="2" placeholder="wxid_xxx, 某昵称"></textarea></div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><h3>私聊配置 <span class="count-pill" id="prvTotal">0</span></h3>
+          <div class="row-gap"><button class="btn btn-primary btn-sm" id="btnPrvNew">新建配置</button></div></div>
+          <div class="alert alert-info">唤醒词留空 = 默认配置（所有私聊消息走它）；白名单留空 = 所有用户；命中配置黑名单或全局黑名单的用户不回复。多条配置按优先级从小到大匹配。每条配置可单独关闭 <b>知识库</b>（跳过检索）或 <b>转人工</b>（忽略关键词与 AI 标记，直接回复）。</div>
+          <div class="table-wrap"><table class="table" id="prvTable"><thead><tr><th data-sort="name">配置名</th><th data-sort="wake_words">唤醒词</th><th data-sort="allow_list">白名单</th><th data-sort="deny_list">黑名单</th><th data-sort="policy_name">知识库配置</th><th data-sort="priority">优先级</th><th data-sort="system_prompt">提示词</th><th data-sort="enabled">状态</th><th>操作</th></tr></thead><tbody id="prvBody"></tbody></table></div></div>
+      </section>
+
+      <!-- ================= 知识库管理 ================= -->
+      <section class="view hidden" id="view-policies">
+        <div class="card"><div class="card-head"><h3>知识库管理 <span class="count-pill" id="polTotal">0</span></h3>
+          <div class="row-gap"><button class="btn btn-ghost btn-sm" id="btnPolSync">同步新文档</button><button class="btn btn-primary btn-sm" id="btnPolNew">新建知识库</button></div></div>
+          <div class="alert alert-info">知识库是一组文档；群聊/私聊配置绑定知识库后，回答只检索该知识库内的文档。<b>新入库的文档默认只加入「默认知识库」</b>，其它知识库需在编辑时手动勾选；手动调整后同步不会被覆盖。</div>
+          <div class="table-wrap"><table class="table tbl-policies"><thead><tr><th>知识库名称</th><th>说明</th><th>包含的知识库文档</th><th>被引用</th><th>状态</th><th>操作</th></tr></thead><tbody id="polBody"></tbody></table></div></div>
+      </section>
+
+      <!-- ================= 通讯录 ================= -->
+      <section class="view hidden" id="view-contacts">
+        <div class="card"><div class="card-head"><h3>通讯录</h3><div class="row-gap">
+          <div class="seg"><button class="seg-btn active" id="tabGroups">群聊</button><button class="seg-btn" id="tabFriends">好友</button><button class="seg-btn" id="tabSearch">查找</button></div>
+          <button class="btn btn-ghost btn-sm" id="btnCtSync">从手机同步</button></div></div>
+          <div id="ctSearch" class="hidden">
+          <div class="ct-searchbar">
+            <input type="search" id="ctSearchInput" autocomplete="off"
+                   placeholder="wxid / 名称 / 昵称 / 备注">
+            <button class="btn btn-primary btn-sm" id="btnCtSearch">搜索</button>
+            <button class="btn btn-ghost btn-sm" id="btnCtSearchClear">清空</button>
+            <span class="muted small" id="ctSearchInfo">搜索只读本地同步缓存，不访问手机插件</span>
+          </div>
+          <div id="ctSearchResult" class="hidden">
+            <div class="table-wrap"><table class="table"><thead><tr>
+              <th>头像</th><th>类型</th><th>名称</th><th>wxid</th><th>昵称 / 备注</th>
+              <th>所在群</th><th>命中</th><th>操作</th>
+            </tr></thead><tbody id="ctSearchBody"></tbody></table></div>
+          </div>
+          </div>
+          <div id="ctGroups">
+            <div class="table-wrap"><table class="table"><thead><tr><th>群名称</th><th>群 ID</th><th>成员数</th><th>已缓存成员</th><th>来源</th><th>同步时间</th><th>操作</th></tr></thead><tbody id="ctGroupBody"></tbody></table></div>
+          </div>
+          <div id="ctFriends" class="hidden">
+            <div class="table-wrap"><table class="table"><thead><tr><th>头像</th><th>显示名</th><th>wxid</th><th>昵称</th><th>备注</th><th>来源</th><th>同步时间</th><th>操作</th></tr></thead><tbody id="ctFriendBody"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 知识库文档 ================= -->
+      <section class="view hidden" id="view-knowledge">
+        <div class="card"><div class="card-head"><h3>知识库文档 <span class="count-pill" id="kbCount">0</span></h3>
+          <div class="row-gap">
+            <button class="btn btn-primary btn-sm" id="btnKbRebuild">重建索引并重载</button>
+          </div></div>
+          <input type="file" id="kbUploadInput" class="hidden" accept=".md,.txt">
+          <input type="file" id="kbImportInput" class="hidden" multiple accept=".docx,.doc,.xlsx,.xlsm,.xls,.pdf">
+          <div class="kb-layout">
+            <!-- 左栏：文档管理 -->
+            <div class="kb-list-card">
+              <div class="kb-pane-title">文档列表</div>
+              <div class="row-gap kb-file-actions">
+                <button class="btn btn-ghost btn-sm" id="btnKbNew">新建</button>
+                <button class="btn btn-ghost btn-sm" id="btnKbUpload">上传 .md/.txt</button>
+                <button class="btn btn-ghost btn-sm" id="btnKbImport"
+                        title="把 Word / Excel / PDF 整个丢进来，自动转成 Markdown 并抽出里面的图片">导入 Office/PDF</button>
+                <button class="btn btn-ghost btn-sm" id="btnKbImages"
+                        title="查看 / 上传 / 插入 / 删除知识库图片">图片库</button>
+              </div>
+              <div class="file-list" id="kbFileList"></div>
+              <div class="kb-import-result" id="kbImportResult"></div>
+              <div class="kb-index" id="kbIndexInfo"></div>
+            </div>
+            <!-- 右栏：内容编辑 -->
+            <div class="kb-editor-card">
+              <div class="kb-pane-title">文档内容</div>
+              <div class="kb-toolbar">
+                <input type="text" id="kbFileName" placeholder="文件名，如 产品FAQ.md">
+                <div class="row-gap">
+                  <button class="btn btn-primary btn-sm" id="btnKbSave" disabled>保存</button>
+                  <button class="btn btn-ghost btn-sm" id="btnKbPreview">预览</button>
+                  <button class="btn btn-ghost btn-sm" id="btnKbSplit">分栏</button>
+                  <button class="btn btn-ghost btn-sm" id="btnKbEdit" disabled>编辑</button>
+                  <button class="btn btn-warn btn-sm" id="btnKbDelete">删除</button>
+                </div>
+              </div>
+              <div class="kb-toolbar kb-md-toolbar" id="kbMdToolbar">
+                <span class="kb-stat" id="kbFileStat">0 行 · 0 KB</span>
+                <span class="row-gap">
+                  <button class="btn btn-ghost btn-sm" id="btnMdBold" title="加粗 **文字**">粗体</button>
+                  <button class="btn btn-ghost btn-sm" id="btnMdHead" title="标题 ##">标题</button>
+                  <button class="btn btn-ghost btn-sm" id="btnMdList" title="列表 - ">列表</button>
+                  <button class="btn btn-ghost btn-sm" id="btnMdTable" title="表格">表格</button>
+                  <button class="btn btn-ghost btn-sm" id="btnMdCode" title="代码块 ```">代码块</button>
+                  <button class="btn btn-ghost btn-sm" id="btnKbInsertImg" title="从图片库选一张插入">插入图片</button>
+                </span>
+              </div>
+              <div class="kb-panes mode-edit" id="kbPanes">
+                <textarea class="kb-editor" id="kbEditor" spellcheck="false" placeholder="在这里编辑 Markdown 知识库内容"></textarea>
+                <div class="md-preview hidden" id="kbPreview"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 问答测试：放在页面底部，文档管理区先看；常驻查询条 + 页内结果，查完可继续查 -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-head">
+            <div><h3>问答测试</h3><p class="muted">用当前知识库真实跑一次检索 + 生成；子进程执行，首次加载模型约 1~3 分钟。结果直接显示在下方，可反复查询。</p></div>
+            <span class="count-pill" id="askState">就绪</span>
+          </div>
+          <div class="ask-bar">
+            <input type="text" id="askInput" placeholder="输入客户可能问的问题，例如：员工手机端怎么开单">
+            <select id="askPolicy" title="知识库配置（留空=全库）"><option value="">全库检索</option></select>
+            <button class="btn btn-primary" id="btnAsk">查询</button>
+          </div>
+          <div id="askResult" class="ask-result"></div>
+        </div>
+      </section>
+
+      <!-- ================= AI 大模型 ================= -->
+      <section class="view hidden" id="view-models">
+        <div class="card">
+          <div class="card-head">
+            <div><h3>当前默认大模型</h3><p class="muted">后台所有大模型调用（微信应答、问答测试、知识库接口）如未特别指定，均使用默认模型；切换后主服务下一次生成即生效，无需重启。</p></div>
+          </div>
+          <div class="kv-list" id="llmEffective"></div>
+          <div class="row-gap" style="margin-top:14px;flex-wrap:wrap">
+            <select id="llmDefaultSel" style="min-width:260px"></select>
+            <button class="btn btn-primary btn-sm" id="btnLlmDefault">设为默认</button>
+            <button class="btn btn-ghost btn-sm" id="btnLlmUseConfig">恢复用 config.yaml</button>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><h3>模型列表 <span class="count-pill" id="llmCount">0</span></h3>
+            <div class="row-gap">
+              <button class="btn btn-ghost btn-sm" id="btnLlmImport" title="把 config.yaml 里正在用的 external_llm 加进来并设为默认">从当前配置导入</button>
+              <button class="btn btn-primary btn-sm" id="btnLlmNew">新增模型</button>
+            </div></div>
+          <div class="table-wrap"><table class="table" id="llmModelListTable"><thead><tr>
+            <th>名称</th><th>供应商</th><th>模型 ID</th><th>Base URL</th><th>API Key</th><th>状态</th><th>默认</th><th>操作</th>
+          </tr></thead><tbody id="modelBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- ================= 插件管理（P2 / P4） ================= -->
+      <section class="view hidden" id="view-plugins">
+        <div class="stat-grid">
+          <div class="stat-card plg-stat c-blue"><div class="stat-label">插件总开关</div><div class="stat-value" id="plgSwitch">—</div><div class="stat-foot" id="plgSwitchFoot">config.yaml · plugins.enabled</div></div>
+          <div class="stat-card plg-stat c-green"><div class="stat-label">已启用插件</div><div class="stat-value" id="plgEnabled">—</div><div class="stat-foot" id="plgEnabledFoot">共 — 个插件</div></div>
+          <div class="stat-card plg-stat c-amber"><div class="stat-label">消息处理器</div><div class="stat-value" id="plgHandlers">—</div><div class="stat-foot">所有 hook 合计</div></div>
+          <div class="stat-card plg-stat c-purple"><div class="stat-label">加载错误</div><div class="stat-value" id="plgErrors">—</div><div class="stat-foot" id="plgErrorsFoot">最近一次扫描</div></div>
+        </div>
+
+        <div class="plg-statusbar">
+          <span class="plg-status-item"><b>调度器</b><span id="plgSchBadge">—</span></span>
+          <span class="plg-status-item"><b>扩展路由</b><span id="plgExtBadge">—</span></span>
+          <span class="plg-status-item"><b>任务实例</b><span id="plgTaskBadge">—</span></span>
+          <span class="plg-status-item plg-status-file"><b>任务配置</b><code>data/plugins/_tasks.yaml</code></span>
+        </div>
+
+        <div class="plg-tabs" id="plgTabs">
+          <button type="button" class="plg-tab active" data-plgtab="list">插件清单</button>
+          <button type="button" class="plg-tab" data-plgtab="tasks">定时任务</button>
+          <button type="button" class="plg-tab" data-plgtab="routes">扩展路由</button>
+          <button type="button" class="plg-tab" data-plgtab="config">私有配置</button>
+        </div>
+
+        <div class="plg-panel" data-plgpanel="list">
+        <div class="card">
+          <div class="card-head">
+            <div><h3>插件清单 <span class="count-pill" id="plgCount">0</span></h3>
+              <p class="muted">优先级数值大的先执行；禁用 / 改优先级会立即重载注册表，已在途消息仍用旧快照。</p></div>
+            <div class="row-gap">
+              <button class="btn btn-ghost btn-sm" id="btnPlgRefresh">刷新</button>
+              <button class="btn btn-primary btn-sm" id="btnPlgReload">重新扫描并重载</button>
+            </div>
+          </div>
+          <div class="alert alert-warn hidden" id="plgWarning"></div>
+          <div class="table-wrap"><table class="table" id="plgTable"><thead><tr>
+            <th>插件</th><th>版本 / 作者</th><th>状态</th><th>优先级</th>
+            <th>钩子</th><th>连续失败</th><th>来源</th><th>操作</th>
+          </tr></thead><tbody id="plgBody"></tbody></table></div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><h3>加载错误与熔断原因</h3></div>
+          <div class="kv-list" id="plgErrorList"></div>
+        </div>
+        </div>
+
+        <div class="plg-panel hidden" data-plgpanel="tasks">
+        <div class="card">
+          <div class="card-head"><div>
+            <h3>定时任务 <span class="count-pill" id="plgTaskCount">0</span></h3>
+            <p class="muted">执行函数由插件代码 <code>@schedule</code> 声明，这里管理的是<b>实例</b>：可改周期、停用 / 移除 / 恢复，并以已有任务为模板复制出新实例。改动写入 <code>data/plugins/_tasks.yaml</code>，最多一个 tick 生效，无需重启或重载。</p></div>
+            <div class="row-gap">
+              <button class="btn btn-ghost btn-sm" id="btnPlgTaskRefresh">刷新</button>
+              <button class="btn btn-primary btn-sm" id="btnPlgTaskNew">新增实例</button>
+            </div>
+          </div>
+          <div class="alert alert-info" id="plgTaskFoot">尚未加载</div>
+
+          <div class="plg-task-form hidden" id="plgTaskForm">
+            <div class="plg-form-title" id="plgTaskFormTitle">新增任务实例</div>
+            <div class="plg-form-grid">
+              <label>复制自 <select id="plgTaskFrom"></select></label>
+              <label>实例标识 <input type="text" id="plgTaskSuffix" maxlength="32" placeholder="如 fast"></label>
+              <label>显示名称 <input type="text" id="plgTaskLabel" maxlength="64" placeholder="留空自动命名"></label>
+              <label>周期类型 <select id="plgTaskKind"><option value="interval">按间隔</option><option value="daily">每天定点</option></select></label>
+              <label id="plgTaskIntervalRow">间隔秒数 <input type="number" id="plgTaskSeconds" min="1" max="2592000" step="1" value="60"></label>
+              <label class="hidden" id="plgTaskDailyRow">每天时间 <span class="plg-time"><input type="number" id="plgTaskHour" min="0" max="23" step="1" value="9"> : <input type="number" id="plgTaskMinute" min="0" max="59" step="1" value="0"></span></label>
+              <label class="plg-check"><input type="checkbox" id="plgTaskEnabled" checked> 启用该任务</label>
+            </div>
+            <div class="row-gap plg-form-actions">
+              <button class="btn btn-primary btn-sm" id="btnPlgTaskSave">保存</button>
+              <button class="btn btn-ghost btn-sm" id="btnPlgTaskCancel">取消</button>
+              <span class="muted small" id="plgTaskFormHint"></span>
+            </div>
+          </div>
+
+          <div class="table-wrap"><table class="table" id="plgTaskTable"><thead><tr>
+            <th>任务</th><th>插件</th><th>周期</th><th>状态</th><th>下次执行</th>
+            <th>已执行 / 失败</th><th>最近耗时</th><th>最近错误</th><th>操作</th>
+          </tr></thead><tbody id="plgTaskBody"></tbody></table></div>
+        </div>
+        </div>
+
+        <div class="plg-panel hidden" data-plgpanel="routes">
+        <div class="card">
+          <div class="card-head"><div>
+            <h3>HTTP 扩展路由 <span class="count-pill" id="plgRouteCount">0</span></h3>
+            <p class="muted">启动期挂好的固定通配路由；默认关闭，开启后强制 <code>X-Internal-Token</code>。</p></div></div>
+          <div class="alert alert-info" id="plgRouteFoot">尚未加载</div>
+          <div class="table-wrap"><table class="table" id="plgRouteTable"><thead><tr>
+            <th>插件</th><th>方法</th><th>完整路径</th><th>状态</th>
+          </tr></thead><tbody id="plgRouteBody"></tbody></table></div>
+        </div>
+        </div>
+
+        <div class="plg-panel hidden" data-plgpanel="config">
+        <div class="card">
+          <div class="card-head"><div><h3>插件私有配置</h3>
+            <p class="muted">编辑 <code>data/plugins/&lt;插件名&gt;.yaml</code>，按 mtime 热读，保存后下一条消息生效，无需重启。</p></div></div>
+          <div class="row-gap" style="flex-wrap:wrap">
+            <select id="plgCfgName" style="min-width:240px"></select>
+            <button class="btn btn-ghost btn-sm" id="btnPlgCfgLoad">读取</button>
+            <button class="btn btn-primary btn-sm" id="btnPlgCfgSave">保存</button>
+          </div>
+          <div class="cfg-editor-wrap" style="margin-top:12px"><textarea class="cfg-editor" id="plgCfgText" spellcheck="false" placeholder="# 该插件还没有私有配置，保存后会自动创建"></textarea></div>
+          <div class="cfg-status" id="plgCfgStatus"></div>
+        </div>
+        </div>
+      </section>
+
+      <!-- ================= 朋友圈管理 ================= -->
+      <section class="view hidden" id="view-moments">
+        <div class="card mom-headcard">
+          <div class="card-head mom-cardhead">
+            <h3>朋友圈 <span class="count-pill" id="momCount">0</span>
+              <span class="muted small mom-foot" id="momFoot">尚未加载</span></h3>
+            <button class="btn btn-primary btn-sm" id="btnMomNext">加载更多</button>
+          </div>
+          <div class="mom-tabrow">
+            <div class="mom-tabs">
+              <button type="button" class="mom-tab active" id="momTabTimeline" data-momsource="timeline" title="时间线（可重复点击刷新）">时间线</button>
+              <button type="button" class="mom-tab" id="momTabUser" data-momsource="user" title="按好友查看其主页动态">好友动态</button>
+            </div>
+            <div class="mom-sourcebar hidden" id="momUserBar">
+              <select id="momFriend"></select>
+              <input type="text" id="momUser" placeholder="或填 wxid">
+            </div>
+            <span class="muted small mom-tip" title="点赞 / 评论是真实社交动作；点媒体全屏查看；刷新请用右上角">点媒体全屏 · 刷新用右上角</span>
+          </div>
+        </div>
+        <div id="momList" class="mom-list"></div>
+      </section>
+
+      <!-- ================= 配置 ================= -->
+      <section class="view hidden" id="view-config">
+        <div class="card"><div class="card-head"><h3>群聊对话延续</h3>
+          <button class="btn btn-primary btn-sm" id="btnFollowupSave">保存并生效</button></div>
+          <div class="alert alert-info">群里回复后，<b>同一群友</b>在窗口时间内接着说话无需再 @ / 唤醒词，超时需重新触发；计时从<b>回复成功发出</b>开始，每次回复刷新。<b>仅 AI 实质回复</b>末尾带续聊提示，对话记录只记原始回答。保存即写入 <code>config.yaml</code>，立即生效、无需重启。</div>
+          <div class="followup-bar">
+            <label><input type="checkbox" id="followupEnabled"> 启用对话延续</label>
+            <label>窗口时长 <input type="number" id="followupMinutes" min="1" max="30" step="1"> 分钟</label>
+            <span class="followup-scope">作用范围：<b>仅同一群友</b></span>
+          </div>
+          <div class="followup-bar followup-hint">
+            <label><input type="checkbox" id="followupHintEnabled"> 回复末尾显示续聊提示</label>
+            <label class="followup-hint-text">提示文案 <input type="text" id="followupHint" maxlength="200" placeholder="留空则不显示提示"></label>
+            <span class="muted small"><code>{minutes}</code> 自动换成当前窗口分钟数</span>
+          </div>
+          <div class="cfg-status" id="followupStatus"></div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><h3>config.yaml 在线编辑</h3>
+          <div class="row-gap"><label class="small"><input type="checkbox" id="cfgMask"> 遮蔽密钥</label>
+            <button class="btn btn-ghost btn-sm" id="btnCfgValidate">校验</button>
+            <button class="btn btn-primary btn-sm" id="btnCfgSave">保存</button></div></div>
+          <div class="cfg-hint">保存为文本级原样写回（保留中文注释），带备份与回滚；<b>改完需重启主服务</b>才生效。</div>
+          <div class="cfg-editor-wrap"><textarea class="cfg-editor" id="cfgText" spellcheck="false"></textarea></div>
+          <div class="cfg-status" id="cfgStatus"></div>
+          <div class="card-head" style="margin-top:18px"><h3>历史备份</h3>
+            <span class="muted small">最多保留 10 份，超过自动删除最老的；也可手工删除</span></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>备份</th><th>操作</th></tr></thead><tbody id="cfgBackupBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- ================= 日志 ================= -->
+      <section class="view hidden" id="view-logs">
+        <div class="card"><div class="card-head"><h3>日志</h3>
+          <div class="row-gap">
+            <div class="seg"><button class="seg-btn active" id="tabLogRuntime">运行日志</button><button class="seg-btn" id="tabLogAdmin">管理端日志</button></div>
+            <input id="logFilter" class="log-filter" type="text"
+                   placeholder="筛选会话 / 发送者 / 关键字"
+                   title="只显示包含关键字的日志行，留空显示全部；可填群名、昵称、wxid" />
+            <button class="btn btn-ghost btn-sm" id="btnLogClear">清空当前</button>
+            <button class="btn btn-warn btn-sm" id="btnLogAuto" title="每 5 秒自动刷新中，点击停止">停止刷新</button>
+            <button class="btn btn-primary btn-sm" id="btnLogRefresh">刷新</button>
+          </div></div>
+          <pre class="log-box" id="logBox"></pre></div>
+      </section>
+
+      <!-- ================= 系统信息 ================= -->
+      <section class="view hidden" id="view-system">
+        <div class="card"><div class="card-head"><h3>运行环境</h3></div><div class="kv-list" id="sysInfo"></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><h3>依赖检查</h3></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>依赖</th><th>状态</th><th>说明</th></tr></thead><tbody id="sysDeps"></tbody></table></div></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- ============ 通用表单模态 ============ -->
+<div class="modal hidden" id="formModal"><div class="modal-mask" data-close="1"></div>
+  <div class="modal-body" style="max-height:86vh;overflow:auto"><h3 id="formTitle">编辑</h3>
+    <div id="formFields"></div>
+    <div class="alert alert-error hidden" id="formError"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="formCancel">取消</button><button class="btn btn-primary" id="formSave">保存</button></div>
+  </div></div>
+
+<!-- ============ 详情模态（群成员 / 好友 / 导入失败明细） ============ -->
+<div class="modal hidden" id="detailModal"><div class="modal-mask" data-close="1"></div>
+  <div class="modal-body" style="max-height:88vh;overflow:auto"><h3 id="detailTitle">详情</h3>
+    <div id="detailBody"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="detailClose">关闭</button><span id="detailExtra"></span></div>
+  </div></div>
+
+<!-- ============ 索引重建进度 ============ -->
+<div class="modal hidden" id="rebuildModal"><div class="modal-mask"></div>
+  <div class="modal-body" style="max-width:430px">
+    <h3 id="rebuildTitle">正在重建索引</h3>
+    <div class="rebuild-stage" id="rebuildStage">准备中…</div>
+    <div class="rebuild-bar"><div class="rebuild-bar-fill" id="rebuildBar"></div></div>
+    <div class="rebuild-meta">
+      <span id="rebuildPct">0%</span>
+      <span id="rebuildDetail"></span>
+    </div>
+    <div class="rebuild-log" id="rebuildLog"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="rebuildClose">后台运行</button>
+    </div>
+  </div></div>
+
+<!-- ============ 知识库图片库：上传 / 点选插入 / 删除 ============ -->
+<div class="modal hidden" id="kbImgDlg"><div class="modal-mask" id="kbImgMask"></div>
+  <div class="modal-body">
+    <h3>知识库图片 <button class="btn btn-ghost btn-sm" id="kbImgClose" style="float:right">关闭</button></h3>
+    <p class="muted small">图片存在 <code>data/knowledge/images/</code>。文档里用
+      <code>![说明](images/文件名.png)</code> 引用：AI 检索到这段内容时会把这张图一起发给客户。
+      导入 Office/PDF 抽出的图片也在这里。上传或导入后需点「重建索引并重载」才生效。</p>
+    <div class="kb-drop" id="kbImgDrop">
+      <input type="file" id="kbImgInput" class="hidden" multiple
+             accept="image/png,image/jpeg,image/gif,image/webp,image/bmp">
+      <p>把截图拖到这里，或 <button class="link-btn" id="btnKbImgPick">点击选择</button></p>
+      <p class="muted small">支持 jpg / png / gif / bmp / webp，单张不超过 10MB</p>
+    </div>
+    <div class="img-grid" id="kbImgList"></div>
+  </div></div>
+
+<!-- ============ 朋友圈媒体预览：全屏灯箱，媒体一律 blob: URL ============ -->
+<div class="modal mom-viewer hidden" id="momViewer"><div class="modal-mask" id="momViewerMask"></div>
+  <div class="mom-viewer-body">
+    <div class="mom-viewer-top"><span class="muted small" id="momViewerCap">媒体预览</span>
+      <span class="muted small" id="momViewerHint"></span>
+      <button class="btn btn-ghost btn-sm" id="momViewerClose">关闭 ✕</button></div>
+    <div class="mom-viewer-box" id="momViewerBox"></div>
+  </div></div>
+
+<!-- ============ 修改密码 ============ -->
+<div class="modal hidden" id="pwdModal"><div class="modal-mask" data-close="1"></div>
+  <div class="modal-body"><h3>修改密码</h3>
+    <div class="field"><label>原密码</label><input type="password" id="pwdOld"></div>
+    <div class="field"><label>新密码（至少 6 位）</label><input type="password" id="pwdNew"></div>
+    <div class="alert alert-error hidden" id="pwdError"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="pwdCancel">取消</button><button class="btn btn-primary" id="pwdSave">保存</button></div>
+  </div></div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<script src="/static/vendor/chart.umd.js"></script>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script src="/static/app.js?v=20261116d"></script>
+</body>
+</html>

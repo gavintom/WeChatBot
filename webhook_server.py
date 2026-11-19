@@ -17,13 +17,14 @@
   · 图片/视频 → 直接回「暂不支持」
   · 自己发出的消息（outgoing / direction=out）→ 忽略，防自问自答
 """
+import atexit
+import contextvars
 import hmac
 import json
 import logging
 import logging.handlers
 import os
 import re
-import contextvars
 import sys
 import tempfile
 import threading
@@ -534,6 +535,12 @@ MEM_PERSIST = BCFG.get("memory_persist", True)
 _conv_lock = threading.Lock()      # 保护内存字典
 _save_lock = threading.Lock()      # 串行化落盘（同一时刻只允许一个线程写文件）
 _conversations = {}
+# 落盘合并窗口（秒）：同一条消息里的两三次 _remember() 合并成一次全量写。
+# 设 0 等价于每次立即写（旧行为），自动化测试或极端保守部署可用环境变量关掉。
+SAVE_DEBOUNCE = float(os.environ.get("WXBOT_CONV_DEBOUNCE") or 1.0)
+_save_pending = threading.Event()  # 有未落盘的改动
+_saver_lock = threading.Lock()
+_saver_started = False
 
 
 def _load_conversations():
@@ -584,6 +591,42 @@ def _save_conversations():
         log.warning("对话记忆落盘失败: %s", e)
 
 
+def _saver_loop():
+    """后台合并落盘线程：攒够 SAVE_DEBOUNCE 秒再写一次，写完继续等。
+
+    纯 daemon 线程：进程退出时不必等它，退出前的兜底由 atexit 的
+    flush_conversations() 负责。
+    """
+    while True:
+        _save_pending.wait()           # 没有改动就睡着，不占 CPU
+        if SAVE_DEBOUNCE > 0:
+            time.sleep(SAVE_DEBOUNCE)  # 合并窗口内的多次改动
+        _save_pending.clear()
+        _save_conversations()
+
+
+def _request_save():
+    """标记「记忆有改动」；由后台线程在合并窗口后统一落盘。"""
+    if not MEM_PERSIST:
+        return
+    if SAVE_DEBOUNCE <= 0:
+        _save_conversations()
+        return
+    global _saver_started
+    with _saver_lock:
+        if not _saver_started:
+            _saver_started = True
+            threading.Thread(target=_saver_loop, daemon=True,
+                             name="conv-saver").start()
+    _save_pending.set()
+
+
+def flush_conversations():
+    """立刻把内存记忆写盘（进程退出 / 测试断言用），并清掉待写标记。"""
+    _save_pending.clear()
+    _save_conversations()
+
+
 def _history(uid):
     with _conv_lock:
         return list(_conversations.get(uid, []))
@@ -600,10 +643,11 @@ def _remember(uid, question, answer):
             h.pop(0)
         if len(_conversations) > 1000:      # 简单 LRU 上限，防止单文件无限膨胀
             _conversations.pop(next(iter(_conversations)))
-    _save_conversations()
+    _request_save()
 
 
 _load_conversations()
+atexit.register(flush_conversations)   # 退出前补一次，最多丢掉合并窗口内的改动
 
 # ---------------------------------------------------------------- 回复发送
 
@@ -878,38 +922,38 @@ def process_message(payload):
         _MSG_CTX.reset(token)
 
 
-def _handle_message(m, ctx=None):
-    kind = policy.message_kind(m)
-    match = {"policy_id": None, "policy_name": "", "trigger": "",
-             "chat_type": m["chat_type"], "sources": None}
-    # 正常链路里 ctx 由 process_message 创建并放进 contextvars；这里只给
-    # 「其它调用方直接传消息进来」留一个安全兜底（此时 on_reply_sent 不派发）。
-    if ctx is None:
-        ctx = pluginhost.PluginContext(
-            m=m, kind=kind, host=PLUGIN_HOST, log=log, registry=PLUGIN_REGISTRY)
-    ctx.match = match
+# 消息主链路按「过滤 → 媒体 → 插件 H1 → 语音 → 策略 → 类型分支 → 提问 → 生成 → 发送」
+# 分阶段实现，_handle_message 只做编排。阶段返回 True 表示「这条消息已在阶段内
+# 消费完」（跳过 / 已回复 / 已转人工），编排层直接 return 不再往下走。
 
+
+def _stage_filter(m, match):
+    """基础过滤：无会话、系统会话、自己发出的、过期消息。返回 True 表示丢弃。"""
     if not m["chat"]:
-        return
+        return True
     # 与 /webhook 入口同一口径：系统会话静默丢弃，不记流水。
     # 这一层是防御（比如历史消息补推、其它调用方直接进 process_message）。
     if policy.is_noise_session(m):
-        return
+        return True
     if policy.is_outgoing(m, self_wxid()):
-        return
+        return True
     if policy.too_old(m, WHCFG.get("max_msg_age") or 600):
         _skip(m, match, "消息过期（超过 max_msg_age）")
-        return
+        return True
+    return False
 
-    # 1.1.1-beta1：入站图片 / 文件落盘（哈希去重、7 天清理、30 分钟流水）。
-    # 放在所有回复分支之前，保证群聊 / 私聊里每张图、每个文件都被记录，
-    # 与是否触发 AI 回复无关；下载失败只记日志，不影响后续处理。
+
+def _stage_media(m):
+    """入站媒体落盘（只落地，不决定是否回复）。
+
+    放在所有回复分支之前，保证群聊 / 私聊里每张图、每个文件都被记录，
+    与是否触发 AI 回复无关；下载失败只记日志，不影响后续处理。
+    """
     if MEDIA_ENABLED and media_store.is_media(m):
         try:
             media_store.ingest(m, WX, log=log.info)
         except Exception as e:
             log.warning("媒体存储异常（已忽略）: %s", e)
-
     # 引用消息里的图片（文档 7.2.1）：只认推送自带的 quoteResolved，
     # quote.type=3 且 found 时，用其 localID + mediaApi（普通档位，不带 hd=1）下载。
     # 发送者/时间取引用消息本身（非原图作者），via='quote'。失败只记日志。
@@ -919,53 +963,23 @@ def _handle_message(m, ctx=None):
         except Exception as e:
             log.warning("引用图片存储异常（已忽略）: %s", e)
 
-    # H1：基础过滤之后、ASR 之前。命令解析 / 自定义黑名单 / 全量旁听。
-    if _hook(ctx, "on_message", kind=kind):
-        _plugin_takeover_event(m, ctx)
-        return
 
-    # 语音：先下载 SILK → ASR，识别文本也参与唤醒词匹配
-    asr_text, asr_failed = "", False
-    if kind == "voice":
-        ok, why = policy.basic_allowed(m, self_wxid())
-        if not ok:
-            _skip(m, match, why)
-            return
-        if not VCFG.get("enabled", True):
-            _skip(m, match, "语音处理已关闭")
-            return
-        try:
-            raw, ext = WX.media(m.get("media_api"), m["chat"], m.get("local_id"))
-            asr_text = voice.voice_bytes_to_text(raw, VCFG, log=log.info, src_ext=ext)
-        except Exception as e:
-            log.warning("语音媒体下载失败: %s", e)
-        if not asr_text:
-            asr_failed = True
+def _stage_asr(m):
+    """下载 SILK 语音并识别，返回 (识别文本, 是否识别失败)。"""
+    asr_text = ""
+    try:
+        raw, ext = WX.media(m.get("media_api"), m["chat"], m.get("local_id"))
+        asr_text = voice.voice_bytes_to_text(raw, VCFG, log=log.info, src_ext=ext)
+    except Exception as e:
+        log.warning("语音媒体下载失败: %s", e)
+    return asr_text, not asr_text
 
-    # 图片/视频默认也要满足触发条件（避免群里每张图都回一句）；媒体消息本身
-    # 不带正文 / @，true 时实际主要靠「对话延续窗口」放行。
-    # reply.media_need_trigger=false 时改为无条件回复「暂不支持」。
-    ignore_trigger = (kind in ("image", "video") and
-                      not RCFG.get("media_need_trigger", True))
-    # H2：策略判定之前。插件可以改 m["text"]（非语音场景）影响唤醒词匹配。
-    if _hook(ctx, "on_pre_resolve", kind=kind):
-        _plugin_takeover_event(m, ctx)
-        return
-    result = policy.resolve(m, self_wxid(),
-                            text_override=asr_text if kind == "voice" else None,
-                            ignore_trigger=ignore_trigger)
-    if not result["handled"]:
-        _skip(m, result, result["reason"])
-        return
-    match = result
 
-    # H3：策略判定之后、类型分支之前。可换知识库策略、改触发条件或完全接管。
-    ctx.match = match
-    if _hook(ctx, "on_post_resolve", kind=kind):
-        _plugin_takeover_event(m, ctx)
-        return
-    match = ctx.match
+def _stage_kind_branch(m, match, kind, asr_failed):
+    """按消息类型直接答复的分支：图片/视频、其它类型、语音识别失败。
 
+    返回 True 表示已经给出了答复（或明确跳过），无需再检索知识库。
+    """
     # 图片 / 视频：直接回「暂不支持」，不做知识检索
     if kind in ("image", "video"):
         reply = str(RCFG.get("unsupported_reply") or
@@ -976,30 +990,32 @@ def _handle_message(m, ctx=None):
                       m.get("chat_name") or m.get("chat"), kind)
         except Exception as e:
             log.warning("回复「暂不支持」失败: %s", e)
-        return
+        return True
 
     if kind == "other":
         _skip(m, match, "暂不处理的消息类型 type=%s" % m.get("type"))
-        return
+        return True
 
     if asr_failed:
         reply = str(VCFG.get("failed_reply") or
                     "抱歉，这条语音没听清，麻烦您再发一次或者直接打字～")
         try:
             _send_text(m, match, reply)
-            _event(m, match, kind="error", answer=reply,
-                   reason="语音识别失败")
+            _event(m, match, kind="error", answer=reply, reason="语音识别失败")
         except Exception as e:
             log.warning("语音兜底回复发送失败: %s", e)
-        return
+        return True
+    return False
 
+
+def _stage_question(m, match, kind, asr_text):
+    """组装提问文本；返回空串表示没有可回答的内容。"""
     # 引用本机消息时，被引用内容往往是机器人自己发出的引用回复（一大段转义 XML），
     # 拼进提问只会污染检索；这段上下文已在对话记忆里，直接用用户当前文本即可。
     ref = {} if match["trigger"] == "quote:self" else policy.quote_reference(m)
     question = textutil.build_question(match["question"] or asr_text, ref).strip()
     if not question:
-        _skip(m, match, "提问为空")
-        return
+        return ""
     maxq = int((CFG.get("api") or {}).get("max_q_chars") or 500) * 4
     question = question[:maxq]
     if match["trigger"] == "followup":
@@ -1009,10 +1025,16 @@ def _handle_message(m, ctx=None):
     log.info("收到消息 | 类型=%s | 触发=%s | 策略=%s | 问=%s",
              kind, match["trigger"] or "-", match["policy_name"] or "-",
              _brief(question))
+    return question
 
-    # 规则级能力开关：不转人工 = 忽略关键词/AI 标记直接回复；
-    # 不需要知识库 = sources 传空策略（retrieve 立即返回，不跑 BM25 / 向量），
-    # 并追加一条提示词覆盖默认的「只依据知识库回答」，让模型正常作答。
+
+def _answer_options(match):
+    """规则级能力开关，返回 (是否允许转人工, 生效的知识库来源, 追加提示词)。
+
+    不转人工 = 忽略关键词 / AI 标记直接回复；
+    不需要知识库 = sources 传空策略（retrieve 立即返回，不跑 BM25 / 向量），
+    并追加一条提示词覆盖默认的「只依据知识库回答」，让模型正常作答。
+    """
     want_transfer = bool(match.get("need_transfer", True))
     need_kb = bool(match.get("need_kb", True))
     effective_sources = match["sources"] if need_kb else []
@@ -1027,24 +1049,19 @@ def _handle_message(m, ctx=None):
         log.info("规则能力开关 | 知识库=%s 转人工=%s | 策略=%s",
                  "on" if need_kb else "off", "on" if want_transfer else "off",
                  match.get("policy_name") or "-")
+    return want_transfer, effective_sources, prompt_extra
 
-    # H4：question 就绪、进入 brain_lock **之前**（所有 hook 都在锁外，防死锁）。
-    # 插件可 set_answer 直接作答，跳过 RAG+LLM；返回 STOP_ALL 则完全接管。
-    ctx.question = question
-    if _hook(ctx, "on_pre_answer", kind=kind):
-        _plugin_takeover_event(m, ctx)
-        return
-    question = ctx.question
 
-    if want_transfer and _want_human_by_keywords(question):
-        _do_transfer(m, match, question, "客户要求转人工")
-        return
+def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
+    """取答案并清洗，返回 (答案, 配图路径, 耗时ms)。
 
-    uid = "%s|%s" % (m["chat"], m.get("sender") or "")
+    插件已给答案时跳过 RAG+LLM；否则在 brain_lock 内跑检索与生成。
+    去 markdown / 截断在这里统一做，调用方拿到的就是可以直接发出去的文本。
+    """
     if ctx.has_answer:
         # 插件直接给答案：不跑检索与 LLM，但清洗 / 记忆 / 发送 / 流水一个都不能少
         ans = ctx.take_answer()
-        images, attempts, llm_id_used, cost_ms = [], [], None, 0
+        images, cost_ms = [], 0
         log.info("插件直接作答，跳过 RAG+LLM | 问=%s", _brief(question))
     else:
         t0 = time.time()
@@ -1071,21 +1088,12 @@ def _handle_message(m, ctx=None):
     if RCFG.get("plain_text", True):
         ans = textutil.strip_markdown(ans)
     ans = textutil.truncate(ans, RCFG.get("max_answer_chars") or 1000)
-    if want_transfer and _want_human_by_ai(ans):
-        clean = ans.replace("[转人工]", "").strip()
-        _remember(uid, question, clean)
-        _do_transfer(m, match, question, "AI 判断需转人工", answer=clean)
-        return
-    if not want_transfer:
-        ans = _strip_transfer_markers(ans)
-    # H5：答案清洗完、写记忆**之前**，插件改过的答案会同步进记忆与流水。
-    ctx.answer = ans
-    if _hook(ctx, "on_post_answer", kind=kind):
-        _plugin_takeover_event(m, ctx)
-        return
-    ans = ctx.answer
-    _remember(uid, question, ans)
+    return ans, images, cost_ms
 
+
+def _send_answer(m, match, ctx, kind, question, ans, images, cost_ms,
+                 effective_sources):
+    """发送回复 + 配图，并写对话流水；发送失败降级为 error 流水。"""
     try:
         via = _send_text(m, match, ans, with_hint=True)
         n_img = _send_images(m, images, lead_gap=True)
@@ -1102,6 +1110,111 @@ def _handle_message(m, ctx=None):
         _fire_error(ctx, e, "回复发送")
         _event(m, match, kind="error", question=question, answer=ans,
                ms=cost_ms, ok=False, reason="发送失败: %s" % e)
+
+
+def _handle_message(m, ctx=None):
+    """消息主链路的**编排层**：只表达阶段顺序与早退，细节都在 _stage_* 里。
+
+    阶段顺序：
+      过滤 → 媒体落盘 → 插件 H1 → 语音 ASR → 策略（H2/H3）→ 类型分支 →
+      组装提问 → 插件 H4 → 生成（H5）→ 记忆 → 发送
+    """
+    kind = policy.message_kind(m)
+    match = {"policy_id": None, "policy_name": "", "trigger": "",
+             "chat_type": m["chat_type"], "sources": None}
+    # 正常链路里 ctx 由 process_message 创建并放进 contextvars；这里只给
+    # 「其它调用方直接传消息进来」留一个安全兜底（此时 on_reply_sent 不派发）。
+    if ctx is None:
+        ctx = pluginhost.PluginContext(
+            m=m, kind=kind, host=PLUGIN_HOST, log=log, registry=PLUGIN_REGISTRY)
+    ctx.match = match
+
+    if _stage_filter(m, match):
+        return
+    _stage_media(m)
+
+    # H1：基础过滤之后、ASR 之前。命令解析 / 自定义黑名单 / 全量旁听。
+    if _hook(ctx, "on_message", kind=kind):
+        _plugin_takeover_event(m, ctx)
+        return
+
+    # 语音：先下载 SILK → ASR，识别文本也参与唤醒词匹配
+    asr_text, asr_failed = "", False
+    if kind == "voice":
+        allowed, why = policy.basic_allowed(m, self_wxid())
+        if not allowed:
+            _skip(m, match, why)
+            return
+        if not VCFG.get("enabled", True):
+            _skip(m, match, "语音处理已关闭")
+            return
+        asr_text, asr_failed = _stage_asr(m)
+
+    # 图片/视频默认也要满足触发条件（避免群里每张图都回一句）；媒体消息本身
+    # 不带正文 / @，true 时实际主要靠「对话延续窗口」放行。
+    # reply.media_need_trigger=false 时改为无条件回复「暂不支持」。
+    ignore_trigger = (kind in ("image", "video") and
+                      not RCFG.get("media_need_trigger", True))
+    # H2：策略判定之前。插件可以改 m["text"]（非语音场景）影响唤醒词匹配。
+    if _hook(ctx, "on_pre_resolve", kind=kind):
+        _plugin_takeover_event(m, ctx)
+        return
+    result = policy.resolve(m, self_wxid(),
+                            text_override=asr_text if kind == "voice" else None,
+                            ignore_trigger=ignore_trigger)
+    if not result["handled"]:
+        _skip(m, result, result["reason"])
+        return
+    match = result
+
+    # H3：策略判定之后、类型分支之前。可换知识库策略、改触发条件或完全接管。
+    ctx.match = match
+    if _hook(ctx, "on_post_resolve", kind=kind):
+        _plugin_takeover_event(m, ctx)
+        return
+    match = ctx.match
+
+    if _stage_kind_branch(m, match, kind, asr_failed):
+        return
+
+    question = _stage_question(m, match, kind, asr_text)
+    if not question:
+        _skip(m, match, "提问为空")
+        return
+
+    want_transfer, effective_sources, prompt_extra = _answer_options(match)
+
+    # H4：question 就绪、进入 brain_lock **之前**（所有 hook 都在锁外，防死锁）。
+    # 插件可 set_answer 直接作答，跳过 RAG+LLM；返回 STOP_ALL 则完全接管。
+    ctx.question = question
+    if _hook(ctx, "on_pre_answer", kind=kind):
+        _plugin_takeover_event(m, ctx)
+        return
+    question = ctx.question
+
+    if want_transfer and _want_human_by_keywords(question):
+        _do_transfer(m, match, question, "客户要求转人工")
+        return
+
+    uid = "%s|%s" % (m["chat"], m.get("sender") or "")
+    ans, images, cost_ms = _generate(m, ctx, uid, question,
+                                     effective_sources, prompt_extra, match)
+    if want_transfer and _want_human_by_ai(ans):
+        clean = ans.replace("[转人工]", "").strip()
+        _remember(uid, question, clean)
+        _do_transfer(m, match, question, "AI 判断需转人工", answer=clean)
+        return
+    if not want_transfer:
+        ans = _strip_transfer_markers(ans)
+    # H5：答案清洗完、写记忆**之前**，插件改过的答案会同步进记忆与流水。
+    ctx.answer = ans
+    if _hook(ctx, "on_post_answer", kind=kind):
+        _plugin_takeover_event(m, ctx)
+        return
+    ans = ctx.answer
+    _remember(uid, question, ans)
+    _send_answer(m, match, ctx, kind, question, ans, images, cost_ms,
+                 effective_sources)
 
 
 def _async(payload):

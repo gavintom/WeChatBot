@@ -14,11 +14,12 @@
 模块加载时确定 DB 路径，此后不再切换 —— 运行中改 db_path 会把旧库「凭空清空」。
 """
 import os
-import sqlite3
 import threading
 import time
 
 import yaml
+
+import db_util
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = os.path.join(BASE_DIR, "data", "chatlog.db")
@@ -115,12 +116,7 @@ def config():
 
 
 def _connect():
-    conn = sqlite3.connect(DB_PATH, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=15000")
-    return conn
+    return db_util.connect(DB_PATH)
 
 
 def _rows(sql, args=()):

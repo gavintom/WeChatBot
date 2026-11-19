@@ -28,6 +28,8 @@ import threading
 import time
 from datetime import datetime
 
+import db_util
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
@@ -125,16 +127,7 @@ def db_path():
 
 
 def _connect():
-    p = db_path()
-    d = os.path.dirname(p)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    conn = sqlite3.connect(p, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=15000")
-    return conn
+    return db_util.connect(db_path())
 
 
 def _ensure(conn):

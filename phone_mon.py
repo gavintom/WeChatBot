@@ -14,10 +14,11 @@ WeChatBotTweak 的 /api/health 只回 runtime.listening / keepAlive 等开关，
 WAL 模式保证写不影响读。所有操作都吞异常（监控失败绝不影响主链路）。
 """
 import os
-import sqlite3
 import threading
 import time
 from datetime import datetime
+
+import db_util
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("WXBOT_DB") or os.path.join(BASE_DIR, "data", "analytics.db")
@@ -29,16 +30,7 @@ OFFLINE_GRACE = 90
 
 
 def _conn():
-    d = os.path.dirname(DB_PATH)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA busy_timeout=10000")
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.DatabaseError:
-        pass
-    return conn
+    return db_util.connect(DB_PATH, timeout=10)
 
 
 def _get(conn, k, default=""):

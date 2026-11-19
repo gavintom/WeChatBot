@@ -5,11 +5,18 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.1-beta7**（beta 版，镜像 tag `1.1.1-beta7`，从源码构建；稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.1-beta8**（beta 版，镜像 tag `1.1.1-beta8`，从源码构建；稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
 
+> **V1.1.1-beta8 更新要点**：**纯内部重构，功能与 beta7 一致**，无行为变更、无需改动配置。
+> 管理后台 `admin/app.py` 从 2101 行拆成 8 个 Blueprint + 共用层 `admin/web.py`；
+> 消息主链路 `_handle_message` 按「过滤 / 媒体 / 语音 / 分支 / 提问 / 生成 / 发送」拆成阶段函数；
+> 四处重复的 SQLite 连接收敛到 `db_util.connect()`；对话记忆落盘改为 1 秒合并窗口
+> （紧跟修复了多线程写坏 `.conversations.json` 的并发缺陷）。
+> 顺带：媒体画质升级从「每图一线程」改为单调度线程；群规则新增「引用本机消息也触发」开关。
+>
 > **V1.1.1-beta7 更新要点**：通讯录「好友」补上**企业微信联系人**
 > （插件 `/api/contacts/friends?uiClass=myEnterpriseMember`，wxid 形如 `xxx@openim`）。
 > 同步时在默认好友池之外按分类再拉一次并合并去重，落库新增 `ui_class` 列（老库自动迁移），

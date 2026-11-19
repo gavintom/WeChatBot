@@ -26,7 +26,7 @@ from admin import cfg
 SECRET_FILE = os.path.join(BASE_DIR, ".admin_secret")
 SESSION_COOKIE = "wxbot_admin_session"
 # 应用版本号：改这里即可，侧栏徽标 / 页面标题 / /api/sysinfo 同步生效
-APP_VERSION = "V1.1.1-beta7"
+APP_VERSION = "V1.1.1-beta8"
 
 
 # ---------------------------------------------------------------- 日志

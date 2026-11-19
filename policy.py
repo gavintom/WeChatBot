@@ -276,7 +276,7 @@ def resolve(m, self_wxid="", text_override=None, ignore_trigger=False):
         at = _at_triggered(m, self_wxid, rule)
         hit, word, q = match_wake_word(text, rule.get("wake_words"))
         # 引用了本机发出的消息也算触发：用户回引机器人刚说的话继续追问时，
-        # 不必再 @ / 加唤醒词。规则里若以后加 quote_self_trigger 可单独关掉。
+        # 不必再 @ / 加唤醒词。群聊规则里的「引用本机消息也触发」可以单独关掉。
         quoted_me = (rule.get("quote_self_trigger", True) and
                      quoted_self_message(m, self_wxid))
         if at or hit or quoted_me:

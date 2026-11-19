@@ -8,10 +8,8 @@
   · 两边都失败时抛异常（**不返回兜底话术**）
   · 用量会记进 llm_usage
 """
-import json
 import os
 import sys
-import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

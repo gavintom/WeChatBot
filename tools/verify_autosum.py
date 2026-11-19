@@ -10,7 +10,7 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pluginhost import CONTINUE, STOP_ALL, PluginBase  # noqa: E402
+from pluginhost import STOP_ALL  # noqa: E402
 from plugins.AutoSummary.main import AutoSummary, _HtmlText  # noqa: E402
 
 OK, FAIL = [], []
@@ -266,7 +266,6 @@ check("非 http(s) 拦下", not p._url_allowed(ctx, "ftp://example.com/x"))
 print("\n=== 6. 会话范围判定 ===")
 p2 = AutoSummary()
 ctx = mk(chat="999@chatroom", sender="wxid_a")
-import store as _store  # noqa: E402  (真实 store 需要数据库，失败则按放行处理)
 check("范围判定不抛异常", isinstance(p2._scope_ok(ctx), bool))
 
 print("\n=== 7. 总结 + 追问闭环 ===")

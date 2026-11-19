@@ -1273,6 +1273,8 @@
       { key: 'wake_words', label: '唤醒词（逗号 / 换行分隔）', type: 'textarea', rows: 2,
         value: '', help: '例如：小助、小范；@ 本机也触发，唤醒词可留空' },
       { key: 'at_all_trigger', label: '', type: 'checkbox', checkLabel: '@所有人也触发' },
+      { key: 'quote_self_trigger', label: '', type: 'checkbox', checkLabel: '引用本机消息也触发',
+        help: '客户回引机器人发过的消息时自动接着回答，不必再 @ 或加唤醒词' },
 
       { type: 'group', label: '知识库' },
       { key: 'need_kb', label: '', type: 'checkbox', checkLabel: '需要查询知识库',
@@ -1300,6 +1302,7 @@
     values.wake_words = arrText(v && v.wake_words);
     values.enabled = v ? v.enabled : true;
     values.at_all_trigger = v ? v.at_all_trigger : false;   // 新建默认不勾选
+    values.quote_self_trigger = v ? (v.quote_self_trigger !== false) : true;
     values.need_kb = v ? (v.need_kb !== false) : true;      // 老数据缺字段时按「开」处理
     values.need_transfer = v ? (v.need_transfer !== false) : true;
     values.system_prompt = (v && v.system_prompt) || '';
@@ -1335,7 +1338,8 @@
                   : '<span class="muted">默认</span>') + '</td>' +
         '<td>' + tag(r.enabled, '启用', '停用') +
           '<span class="muted small">知识库 ' + (r.need_kb !== false ? '开' : '关') +
-          ' · 转人工 ' + (r.need_transfer !== false ? '开' : '关') + '</span></td>' +
+          ' · 转人工 ' + (r.need_transfer !== false ? '开' : '关') +
+          ' · 引用触发 ' + (r.quote_self_trigger !== false ? '开' : '关') + '</span></td>' +
         '<td><button class="btn btn-ghost btn-sm" data-gedit="' + r.id + '">编辑</button> ' +
         '<button class="btn btn-warn btn-sm" data-gdel="' + r.id + '">删除</button></td></tr>';
     }).join('') : emptyRow(9, '还没有群聊配置；点右上角「新建配置」，只有表内的群才会被响应');
@@ -3554,6 +3558,24 @@
       toast(d.message); loadDashboard();
     }).catch(fail);
   });
+
+  // 主动刷新授权：卡片里的授权状态默认跟 /api/status 一起取，
+  // 客户刚在微信里续期后可以点这里立刻回读，不必刷新整页。
+  (function () {
+    var b = $('btnRefreshLicense');
+    if (!b) return;
+    b.addEventListener('click', function () {
+      b.disabled = true;
+      api('/api/plugin/license')
+        .then(function (d) {
+          var lic = d.license || {};
+          toast(lic.stateText || ('授权状态：' + (lic.state || '未知')));
+          loadDashboard();
+        })
+        .catch(fail)
+        .then(function () { b.disabled = false; });
+    });
+  })();
 
   // 手机插件激活码：插件协议里空码 = 清除授权，这里三层拦截（required / JS / 后台）
   (function () {

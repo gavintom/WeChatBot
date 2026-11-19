@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS group_rules (
     policy_id      INTEGER,
     enabled        INTEGER NOT NULL DEFAULT 1,
     at_all_trigger INTEGER NOT NULL DEFAULT 1,
+    -- 客户引用本机（机器人）消息时是否也当作触发：关掉后仍需 @ 或唤醒词
+    quote_self_trigger INTEGER NOT NULL DEFAULT 1,
     -- 规则级能力开关：关掉转人工=直接回复；关掉知识库=跳过检索
     need_transfer  INTEGER NOT NULL DEFAULT 1,
     need_kb        INTEGER NOT NULL DEFAULT 1,
@@ -644,6 +646,7 @@ def init_db():
             # 幂等迁移：老库缺列时补上（不改动任何已有数据）
             _migrations = {
                 "group_rules": [("system_prompt", "TEXT NOT NULL DEFAULT ''"),
+                                ("quote_self_trigger", "INTEGER NOT NULL DEFAULT 1"),
                                 ("human_wxid", "TEXT NOT NULL DEFAULT ''"),
                                 ("human_name", "TEXT NOT NULL DEFAULT ''"),
                                 ("need_transfer", "INTEGER NOT NULL DEFAULT 1"),
@@ -717,7 +720,6 @@ def init_db():
 # ---------------------------------------------------------------- 群聊配置
 
 def _json_list(value):
-    import json
     from textutil import parse_list
     return json.dumps(parse_list(value), ensure_ascii=False)
 
@@ -732,6 +734,7 @@ def _rules_with_policy(rows):
         r["policy_name"] = p["name"] if p else ""
         r["docs"] = p["docs"] if p else []
         r["at_all_trigger"] = bool(r.get("at_all_trigger", 1)) if "at_all_trigger" in r else True
+        r["quote_self_trigger"] = bool(r.get("quote_self_trigger", 1))
         r["need_transfer"] = bool(r.get("need_transfer", 1))
         r["need_kb"] = bool(r.get("need_kb", 1))
         r["system_prompt"] = r.get("system_prompt") or ""
@@ -741,7 +744,6 @@ def _rules_with_policy(rows):
 
 
 def _loads(s):
-    import json
     try:
         v = json.loads(s or "[]")
         return v if isinstance(v, list) else []
@@ -782,6 +784,7 @@ def save_group_rule(data):
             _json_list(d.get("wake_words")), pid,
             1 if d.get("enabled", True) else 0,
             1 if d.get("at_all_trigger", False) else 0,   # 新建默认不把 @所有人 当触发
+            1 if d.get("quote_self_trigger", True) else 0,
             str(d.get("note") or "").strip(),
             str(d.get("system_prompt") or "").strip(),
             human_wxid, human_name,
@@ -792,15 +795,16 @@ def save_group_rule(data):
         if dup:
             raise ValueError("群聊 ID 已存在")
         _write("UPDATE group_rules SET group_id=?,group_name=?,wake_words=?,policy_id=?,"
-               "enabled=?,at_all_trigger=?,note=?,system_prompt=?,human_wxid=?,human_name=?,"
-               "need_transfer=?,need_kb=?,updated_at=? WHERE id=?", vals + (now, rid))
+               "enabled=?,at_all_trigger=?,quote_self_trigger=?,note=?,system_prompt=?,"
+               "human_wxid=?,human_name=?,need_transfer=?,need_kb=?,updated_at=? "
+               "WHERE id=?", vals + (now, rid))
         return int(rid)
     if _one("SELECT id FROM group_rules WHERE group_id=?", (gid,)):
         raise ValueError("群聊 ID 已存在，请直接编辑该条配置")
     return _write("INSERT INTO group_rules(group_id,group_name,wake_words,policy_id,enabled,"
-                  "at_all_trigger,note,system_prompt,human_wxid,human_name,"
+                  "at_all_trigger,quote_self_trigger,note,system_prompt,human_wxid,human_name,"
                   "need_transfer,need_kb,created_at,updated_at) "
-                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
+                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
 
 
 def delete_group_rule(rid):
@@ -865,7 +869,6 @@ def get_global_deny():
 
 def set_global_deny(value):
     from textutil import parse_list
-    import json
     set_setting("global_deny", json.dumps(parse_list(value), ensure_ascii=False))
 
 
@@ -1429,7 +1432,6 @@ def list_groups():
 
 
 def save_contacts(contacts):
-    import json
     now = time.time()
 
     def _do(conn):
@@ -1489,7 +1491,6 @@ def replace_contacts_catalog(groups, contacts):
     ⚠️ 边界：这无法区分「手机真的删光了所有群」与「快照故障返回空」——前者
     也会被当成保护而保留旧数据。宁可保留也不误删；确需清空全部请走手工入口。
     """
-    import json
     now = time.time()
     groups = list(groups or [])
     contacts = list(contacts or [])
@@ -1555,7 +1556,6 @@ def avatar_map():
 def get_contact(wxid):
     r = _one("SELECT * FROM wx_contacts WHERE wxid=?", (str(wxid or ""),))
     if r:
-        import json
         r["is_self"] = bool(r.get("is_self"))
         r["is_group"] = bool(r.get("is_group"))
         try:

@@ -138,6 +138,8 @@
               <input type="text" id="activateCode" required autocomplete="off"
                      spellcheck="false" placeholder="粘贴激活码（不可为空）">
               <button type="submit" class="btn btn-primary btn-sm" id="btnActivate">激活</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshLicense"
+                      title="主动向手机插件重新读取授权状态（插件离线时不会报错）">刷新授权</button>
             </form>
             <div class="license-hint">空激活码不会提交：插件协议中空码表示「清除授权回到试用」，本后台不提供清除入口。授权过期后接口不可达，需在微信内 我 → 设置 → WeChatBot → 状态与测试 重新激活。</div>
           </div>

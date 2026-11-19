@@ -2,7 +2,7 @@
 import re
 
 # 宿主能力版本：manifest 的 min_host_version 超过它就拒绝加载。
-# 与产品版本 APP_VERSION(V1.1.1-beta2) 对齐。
+# 与产品版本 APP_VERSION(V1.1.1) 对齐。
 # 1.1.1 新增 ctx.recent_media()（查询最近 N 分钟的图片/文件）；
 # 老插件声明 min_host_version 1.1.0 仍可正常加载。
 HOST_VERSION = "1.1.1"

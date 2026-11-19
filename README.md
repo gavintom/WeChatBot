@@ -5,17 +5,37 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.1-beta8**（beta 版，镜像 tag `1.1.1-beta8`，从源码构建；稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.1**（正式版，镜像 tag `1.1.1`，从源码构建；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
 
-> **V1.1.1-beta8 更新要点**：**纯内部重构，功能与 beta7 一致**，无行为变更、无需改动配置。
-> 管理后台 `admin/app.py` 从 2101 行拆成 8 个 Blueprint + 共用层 `admin/web.py`；
-> 消息主链路 `_handle_message` 按「过滤 / 媒体 / 语音 / 分支 / 提问 / 生成 / 发送」拆成阶段函数；
-> 四处重复的 SQLite 连接收敛到 `db_util.connect()`；对话记忆落盘改为 1 秒合并窗口
-> （紧跟修复了多线程写坏 `.conversations.json` 的并发缺陷）。
-> 顺带：媒体画质升级从「每图一线程」改为单调度线程；群规则新增「引用本机消息也触发」开关。
+> **V1.1.1 更新要点**：从 1.1.0 到 1.1.1 的正式版，功能面 + 内部质量两条线。
+
+> **① 运行监控**：手机卡片新增「上次活跃时间 / 后台连续运行时长」，推送地址并入卡片；
+> 新增独立**告警地址**写入（`POST /api/alert` 接收掉线 / 授权告警）。
+> **② 媒体文件**：群聊 / 私聊的图片、文件自动下载到 `data/images`、`data/files`，
+> 按内容哈希去重，流水保留 30 分钟、磁盘保留 7 天，可按群名 / 群号 / wxid 检索最近 0-30 分钟
+> （管理端「媒体文件」页 + `/api/media/recent`）；插件新增 `ctx.recent_media()`。
+> **③ 通讯录写操作**：改好友备注、改我的群昵称、改群友备注，三个操作都写进手机真实数据，
+> 以插件回读 `confirmed` 为准（需插件 **v1.2.10-beta67+**）；备注为全局生效，界面明确提示；
+> 写完强制插件重建通讯录快照，其它群 / 好友页不再显示旧值。
+> **④ 通讯录字段**：好友列表标出「本人」与企业微信联系人（`uiClass=myEnterpriseMember`），
+> 群成员表新增「管理员」列。
+> **⑤ 交互**：写操作按钮保存后立刻置灰（防连点重复写入），确认框改站内居中弹窗，
+> 结果提示顶部居中并延长停留（6s / 警告错误 8s）。
+>
+> **内部质量**：`admin/app.py` 从 2101 行拆成 8 个 Blueprint + 共用层；消息主链路按
+> 「过滤 / 媒体 / 语音 / 分支 / 提问 / 生成 / 发送」拆成阶段函数；四处重复的 SQLite 连接
+> 收敛到 `db_util.connect()`；对话记忆落盘改 1 秒合并窗口（并修掉多线程写坏
+> `.conversations.json` 的并发缺陷）；媒体画质升级从「每图一线程」改为单调度线程；
+> 群规则新增「引用本机消息也触发」开关。另修掉一批「配置承诺但代码没实现」的链路：
+> `config.yaml.example` 兜底路径、`retrieval.warmup`、以及三个从未被读取的配置键
+> （`voice.mode` / `voice.fallback_reply` / `brain.images.send_gap`）。**无需改动配置。**
+>
+> 以下为 beta 过程记录，按版本倒序保留。
+>
+> **V1.1.1-beta8 更新要点**：纯内部重构，功能与 beta7 一致，无行为变更、无需改动配置。
 >
 > **V1.1.1-beta7 更新要点**：通讯录「好友」补上**企业微信联系人**
 > （插件 `/api/contacts/friends?uiClass=myEnterpriseMember`，wxid 形如 `xxx@openim`）。

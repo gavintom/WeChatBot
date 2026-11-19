@@ -104,9 +104,22 @@ def normalize(payload):
         "at_all": bool(m.get("atAll")) or str(m.get("content") or "").startswith("@所有人"),
         "local_id": int(m.get("localID") or 0),
         "media_api": str(m.get("mediaApi") or ""),
+        # 文件消息元信息（1.1.1-beta1）：payload 原本就带，早期归一化丢弃了，
+        # 媒体存储要按原名落记录，这里补回来，不影响其它字段口径。
+        "file_name": str(m.get("fileName") or ""),
+        "file_size": m.get("fileSize") or 0,
+        "file_ext": str(m.get("fileExt") or ""),
+        "file_md5": str(m.get("fileMd5") or ""),
+        "app_sub_type": str(m.get("appSubType") or ""),
         "outgoing": bool(m.get("outgoing")),
         "direction": str(m.get("direction") or "").lower(),
         "ts": float(m.get("ts") or 0),
+        # 引用消息结构化字段（文档 7.2.1）：quote + quoteResolved。
+        # 按「推送必带 quoteResolved」处理，只用于下载被引用的图片；不回查历史。
+        "svrid": str(m.get("svrid") or ""),
+        "quote": m.get("quote") if isinstance(m.get("quote"), dict) else {},
+        "quote_resolved": (m.get("quoteResolved")
+                           if isinstance(m.get("quoteResolved"), dict) else {}),
     }
     return out
 

@@ -95,7 +95,8 @@ brain:
     # 需要重排时自行下载到 ./models/bge-reranker-base（下载方式见 README）。
     embedding_model: "./models/bge-base-zh-v1.5"
     device: ""                           # ""=自动（cuda/mps/cpu）
-    warmup: true
+    warmup: true                         # 启动时后台预热检索/重排模型；false=首个请求时才加载
+                                         # （无 GPU 机器加载较慢时，关掉可让启动更快）
     rerank:
       enabled: false                     # 默认关闭：cross-encoder 在无 GPU 机器上每候选 2~3 秒，
                                          # 16 个候选就要 30~50 秒延迟。只有确认有 GPU、且知识库规模
@@ -112,12 +113,11 @@ brain:
     max_candidates: 4
     auto_fallback: false
     max_bytes: 2097152
-    send_gap: 0.6
+    # 配图与文字之间的发送间隔统一由 reply.interval_seconds 控制，此处不再单列。
 
 # ---------------------------------------------------------------- 语音识别
 voice:
   enabled: true
-  mode: "asr"                            # asr=识别后智能应答；reply=只回固定话术
   provider: "siliconflow"                # siliconflow / dashscope / openai / custom / selfhosted
   asr_api_key: "sk-xxxx"
   asr_base_url: "http://192.0.2.207:6001/asr"   # provider=selfhosted 时的完整端点
@@ -129,7 +129,7 @@ voice:
   transcode: true
   mp3_bitrate: "32k"
   ffmpeg_path: "ffmpeg"
-  fallback_reply: "不好意思，我这边暂时听不了语音，麻烦您打字发一下～"
+  # 语音统一走「识别成文字 → 正常问答」；识别失败（或未装 pilk 解不出 SILK）时回下面这句。
   failed_reply: "抱歉，这条语音没听清，麻烦您再发一次或者直接打字～"
   # iOS 微信语音是 SILK_V3，可选装 `pip install pilk` 让服务端先解码成 WAV；
   # 未安装时会尝试 ffmpeg 直解，仍失败则回 failed_reply。
@@ -198,6 +198,23 @@ admin:
 # ---------------------------------------------------------------- 插件系统
 # 默认关闭：不配置 / enabled=false 时，消息链路与插件系统上线前完全一致。
 # 插件代码放项目根 plugins/（随版本分发），私有配置放 data/plugins/（随卷持久化）。
+# ---------------------------------------------------------------- 图片/文件媒体存储（1.1.1-beta1）
+# 群聊/私聊的图片(type=3)、文件(type=49 file*)下载到 data/images、data/files，
+# 按内容哈希命名去重。不配置此段也能工作（全部走下方默认值）。
+media_store:
+  enabled: true                       # false 关闭媒体下载（不影响消息回复）
+  record_ttl_days: 7                  # 流水记录保留天数（默认与 file_ttl_days 相同）
+  # index_ttl_minutes: 30            # 旧配置，已废弃：流水不再按 30 分钟清理
+  file_ttl_days: 7                    # 文件超过 N 天且表内已无记录引用时才删除（不按时间硬删）
+  # 图片画质轮询：先查一次 info=1，再在 5s/10s/20s 各查一次；
+  # 只有档位升到 middle/original 才下载，到 20s 上限仍低清就下载当前档位。
+  # 新图 info 本身可能阻塞十几秒，调度会跳过被越过的中间检查点。
+  image_wait: 20                      # 最长等待秒数（最后一个检查点）；0=不等待立即下
+  image_poll: 2                       # 兼容旧配置保留；现由固定检查点 0/5/10/20 驱动
+  # 引用消息里的图片（文档 7.2.1）：按推送自带的 quoteResolved.localID + mediaApi
+  # 下载（普通档位，不带 hd=1）；发送者/发送时间取引用消息本身（非原图作者），via=quote。
+  quote_image: true                   # false 关闭引用图片下载
+
 plugins:
   enabled: false                      # 总开关；true 才会扫描并加载插件
   dir: "plugins"                      # 内置插件目录（相对项目根）

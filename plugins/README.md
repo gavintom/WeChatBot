@@ -130,6 +130,7 @@ class YourPlugin(PluginBase):
 | `ctx.ask_brain(question, **kw)` | 走 `brain_lock` 代理调用知识库问答 |
 | `ctx.llm_chat(messages, **kw)` | 直连**内置大模型**（不检索知识库），见下 |
 | `ctx.history()` / `ctx.remember(q, a)` | 读写该会话的对话记忆 |
+| `ctx.recent_media(wxid=None, chat=None, chat_name=None, minutes=30, kind=None, chat_type=None, limit=200)` | **1.1.1 新增**：查最近 N 分钟（0-30）内某人 / 某会话发送的图片与文件。返回 `list[dict]`：`kind`(image/file) / `orig_name`(原名) / `hash_name` / `sha256` / `download_time` / `downloaded_at` / `chat` / `chat_name` / `wxid` / `sender_name` / `path`(绝对路径，文件已过期为 "") / `available`。例：`ctx.recent_media(wxid=ctx.m["sender"], minutes=10)`；`ctx.recent_media(chat=ctx.m["chat"], kind="file")`。`TaskContext`/`HttpContext` 也能用 |
 | `ctx.wx` | 手机插件**只读查询**（v2 通讯录，方法名与插件文档第 6 章一一对应）：`health / groups / friends / group_members / find_contact / media`。返回值**原样透传**、不做包装：`groups()` → 列表，`friends()` → `{friends, count}`（带 `wxid/name` 时为 `{lookup}`），`find_contact()` → 统一反查结构 `{mode, query, exact, count, truncated, matches[]}`。已下线的 `/api/contacts` 没有对应方法，需要查群成员请用 `group_members(chat)` |
 | `ctx.self_wxid()` | 当前登录账号 wxid |
 | `ctx.last_reply_text` / `ctx.via` | `on_reply_sent` 时最近发出的文本与方式 |

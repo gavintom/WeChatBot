@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1f18">
 <title>微信智能客服 · 管理后台 {{ app_version }}</title>
-<link rel="stylesheet" href="/static/app.css?v=20261116d">
+<link rel="stylesheet" href="/static/app.css?v=20261119beta9">
 </head>
 <body>
 <!-- 移动端抽屉遮罩：桌面由 CSS 隐藏；点它 / 按 Esc / 切换页面都会收起侧栏 -->
@@ -30,6 +30,7 @@
           <a class="nav-item nav-child" data-view="apicalls"><svg viewBox="0 0 24 24"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zm0 14H4V8h16v10zM7 5h2v2H7V5zm4 0h2v2h-2V5z"/></svg><span>API 记录</span></a>
           <a class="nav-item nav-child" data-view="llm"><svg viewBox="0 0 24 24"><path d="M5 3h3v18H5V3zm5 5h3v13h-3V8zm5-3h3v16h-3V5zm5 6h2v7h-2v-7z"/></svg><span>AI 用量</span></a>
           <a class="nav-item nav-child" data-view="chatlog"><svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 00-2 2v18l4-4h14a2 2 0 002-2V4a2 2 0 00-2-2zm0 14H5.2L4 17.2V4h16v12zM7 7h10v2H7V7zm0 4h7v2H7v-2z"/></svg><span>聊天记录</span></a>
+          <a class="nav-item nav-child" data-view="media"><svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg><span>媒体文件</span></a>
           <a class="nav-item nav-child" data-view="logs"><svg viewBox="0 0 24 24"><path d="M3 5h18v2H3V5zm0 6h12v2H3v-2zm0 6h18v2H3v-2z"/></svg><span>运行日志</span></a>
         </div>
       </div>
@@ -112,9 +113,26 @@
           <div class="card"><div class="card-head"><h3>手机插件（个人微信）</h3>
             <div class="card-pills">
               <span class="count-pill" id="dashPluginState">检测中</span>
+              <span class="count-pill" id="dashPhoneActive">活跃检测中</span>
               <span class="count-pill" id="dashLicenseState">授权检测中</span>
             </div></div>
             <div class="kv-list" id="dashPlugin"></div>
+            <div class="hook-box">
+              <div class="hook-row">
+                <label for="hookUrl">推送地址</label>
+                <input type="text" id="hookUrl" class="hook-input" spellcheck="false"
+                       placeholder="https://…/webhook?token=…" autocomplete="off">
+                <button class="btn btn-primary btn-sm" id="btnSetHook">写入推送地址</button>
+              </div>
+              <div class="hook-row">
+                <label for="alertUrl">告警地址</label>
+                <input type="text" id="alertUrl" class="hook-input" spellcheck="false"
+                       placeholder="https://…/alert?token=… 或第三方推送地址" autocomplete="off">
+                <button class="btn btn-ghost btn-sm" id="btnSetAlert">写入告警地址</button>
+                <button class="btn btn-ghost btn-sm" id="btnTestAlert">测试告警</button>
+              </div>
+              <div class="cfg-hint">两个地址都可手动修改后写入手机插件：推送地址收客户消息，告警地址收掉线 / 授权提醒（独立通道，可填第三方推送如 Server 酱）。留空点写入则恢复为本机建议地址。</div>
+            </div>
             <form id="activateForm" class="activate-form" autocomplete="off">
               <label for="activateCode">激活码</label>
               <input type="text" id="activateCode" required autocomplete="off"
@@ -164,13 +182,11 @@
         <div class="card" style="margin-top:14px">
           <div class="card-head"><h3>快捷操作</h3></div>
           <div class="service-actions">
-            <button class="btn btn-primary" id="btnSetHook">把 webhook 地址写入手机插件</button>
             <button class="btn btn-ghost" id="btnSyncContacts">同步通讯录</button>
             <button class="btn btn-ghost" id="btnReloadIndex">重建索引并重载</button>
             <button class="btn btn-ghost" id="btnSyncDocs">同步新文档到所有知识库</button>
           </div>
-          <div class="cfg-hint" style="margin-top:14px">建议推送地址：<code id="hookSuggest">—</code><br>
-            在手机插件设置页把 webhook 填成这个地址；上面的按钮可以直接替你写入。</div>
+          <div class="cfg-hint" style="margin-top:14px">推送 / 告警地址的写入已统一放到上方「手机插件」卡片。</div>
         </div>
       </section>
 
@@ -224,6 +240,44 @@
             <th>方向</th><th>消息类型</th><th>@</th><th>正文</th>
           </tr></thead><tbody id="chatBody"></tbody></table></div>
           <div class="pager"><button class="btn btn-ghost btn-sm" id="chatPrev">上一页</button><span id="chatPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="chatNext">下一页</button></div>
+        </div>
+      </section>
+
+      <!-- ================= 媒体文件（图片/文件，全部记录 + 分页） ================= -->
+      <section class="view hidden" id="view-media">
+        <div class="card">
+          <div class="card-head"><h3>媒体文件检索</h3><span class="muted">群聊 / 私聊的图片与文件，按哈希去重；流水与磁盘文件同寿（默认保留 7 天），支持「全部」与分页</span></div>
+          <div class="stat-grid" style="margin-bottom:16px">
+            <div class="stat-card"><div class="stat-label">流水记录</div><div class="stat-value" id="mediaIndexCount">—</div><div class="stat-foot">库内全部记录</div></div>
+            <div class="stat-card"><div class="stat-label">磁盘文件</div><div class="stat-value" id="mediaFileCount">—</div><div class="stat-foot">图片 + 文件</div></div>
+            <div class="stat-card"><div class="stat-label">占用空间</div><div class="stat-value" id="mediaFileBytes">—</div><div class="stat-foot">data/images + data/files</div></div>
+            <div class="stat-card"><div class="stat-label">本次结果</div><div class="stat-value" id="mediaResultCount">—</div><div class="stat-foot">按下方条件筛选</div></div>
+          </div>
+          <div class="filter-bar filter-inline media-filters">
+            <div class="filter-item"><label>群聊名</label><input type="text" id="mediaChatName" placeholder="群名 / 昵称（包含匹配）"></div>
+            <div class="filter-item"><label>群聊号</label><input type="text" id="mediaChat" placeholder="xxx@chatroom / 对方 wxid"></div>
+            <div class="filter-item"><label>发送者 wxid</label><input type="text" id="mediaWxid" placeholder="精确 wxid"></div>
+            <div class="filter-item"><label>时间范围</label><select id="mediaMinutes">
+              <option value="0">全部（不限时间）</option><option value="30">最近 30 分钟</option>
+              <option value="20">最近 20 分钟</option><option value="10">最近 10 分钟</option>
+              <option value="5">最近 5 分钟</option><option value="1">最近 1 分钟</option>
+            </select></div>
+            <div class="filter-item"><label>类型</label><select id="mediaKind"><option value="">全部</option><option value="image">图片</option><option value="file">文件</option></select></div>
+            <div class="filter-item"><label>场景</label><select id="mediaChatType"><option value="">全部</option><option value="group">群聊</option><option value="private">私聊</option></select></div>
+            <div class="filter-item"><label>每页</label><select id="mediaPageSize">
+              <option value="50">50 条</option><option value="100">100 条</option><option value="200">200 条</option>
+            </select></div>
+            <div class="filter-actions">
+              <button class="btn btn-primary btn-sm" id="btnMediaSearch">查询</button>
+              <button class="btn btn-ghost btn-sm" id="btnMediaReset">重置</button>
+            </div>
+          </div>
+          <div class="table-wrap media-table-wrap"><table class="table media-table"><thead><tr>
+            <th>下载时间</th><th>场景</th><th>会话（群名 / 群聊ID）</th><th>发送者（昵称 / wxid）</th>
+            <th>类型</th><th>原始文件名</th><th>哈希文件名</th><th>大小</th><th>状态</th>
+          </tr></thead><tbody id="mediaBody"></tbody></table></div>
+          <div class="pager"><button class="btn btn-ghost btn-sm" id="mediaPrev">上一页</button><span id="mediaPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="mediaNext">下一页</button></div>
+          <div class="cfg-hint" style="margin-top:12px">文件按内容哈希命名，重复内容只落一份；流水与磁盘文件默认保留 7 天，过后自动清理。点绿色「可预览」即可打开图片或文件，表格过宽可左右滑动。</div>
         </div>
       </section>
 
@@ -348,6 +402,14 @@
         <div class="card"><div class="card-head"><h3>通讯录</h3><div class="row-gap">
           <div class="seg"><button class="seg-btn active" id="tabGroups">群聊</button><button class="seg-btn" id="tabFriends">好友</button><button class="seg-btn" id="tabSearch">查找</button></div>
           <button class="btn btn-ghost btn-sm" id="btnCtSync">从手机同步</button></div></div>
+          <div class="alert alert-info" style="margin:0 0 12px">
+            好友列表带「本人」标记，<b>本人不能改备注</b>（微信没有这个通道）。
+            企业微信联系人（<code>uiClass=myEnterpriseMember</code>）也归在好友里，标<span class="tag tag-ent">企业</span>，
+            wxid 形如 <code>xxx@openim</code>。群聊点「查看群友」后，
+            本人一行只能改<b>自己的群昵称</b>（群内可见）；其他成员可「改备注」，走的是全局好友备注，
+            <b>该群友在所有群中本机看到的显示名都将是该备注</b>，<b>不需要群主 / 管理员权限</b>。
+            写入的是手机微信里的真实数据，需要手机插件 <b>v1.2.10-beta67</b> 及以上。
+          </div>
           <div id="ctSearch" class="hidden">
           <div class="ct-searchbar">
             <input type="search" id="ctSearchInput" autocomplete="off"
@@ -367,7 +429,7 @@
             <div class="table-wrap"><table class="table"><thead><tr><th>群名称</th><th>群 ID</th><th>成员数</th><th>已缓存成员</th><th>来源</th><th>同步时间</th><th>操作</th></tr></thead><tbody id="ctGroupBody"></tbody></table></div>
           </div>
           <div id="ctFriends" class="hidden">
-            <div class="table-wrap"><table class="table"><thead><tr><th>头像</th><th>显示名</th><th>wxid</th><th>昵称</th><th>备注</th><th>来源</th><th>同步时间</th><th>操作</th></tr></thead><tbody id="ctFriendBody"></tbody></table></div>
+            <div class="table-wrap"><table class="table"><thead><tr><th>头像</th><th>显示名</th><th>本人</th><th>wxid</th><th>昵称</th><th>备注</th><th>来源</th><th>同步时间</th><th>操作</th></tr></thead><tbody id="ctFriendBody"></tbody></table></div>
           </div>
         </div>
       </section>
@@ -470,10 +532,10 @@
       <!-- ================= 插件管理（P2 / P4） ================= -->
       <section class="view hidden" id="view-plugins">
         <div class="stat-grid">
-          <div class="stat-card plg-stat c-blue"><div class="stat-label">插件总开关</div><div class="stat-value" id="plgSwitch">—</div><div class="stat-foot" id="plgSwitchFoot">config.yaml · plugins.enabled</div></div>
-          <div class="stat-card plg-stat c-green"><div class="stat-label">已启用插件</div><div class="stat-value" id="plgEnabled">—</div><div class="stat-foot" id="plgEnabledFoot">共 — 个插件</div></div>
-          <div class="stat-card plg-stat c-amber"><div class="stat-label">消息处理器</div><div class="stat-value" id="plgHandlers">—</div><div class="stat-foot">所有 hook 合计</div></div>
-          <div class="stat-card plg-stat c-purple"><div class="stat-label">加载错误</div><div class="stat-value" id="plgErrors">—</div><div class="stat-foot" id="plgErrorsFoot">最近一次扫描</div></div>
+          <div class="stat-card c-blue"><div class="stat-label">插件总开关</div><div class="stat-value" id="plgSwitch">—</div><div class="stat-foot" id="plgSwitchFoot">config.yaml · plugins.enabled</div></div>
+          <div class="stat-card c-green"><div class="stat-label">已启用插件</div><div class="stat-value" id="plgEnabled">—</div><div class="stat-foot" id="plgEnabledFoot">共 — 个插件</div></div>
+          <div class="stat-card c-amber"><div class="stat-label">消息处理器</div><div class="stat-value" id="plgHandlers">—</div><div class="stat-foot">所有 hook 合计</div></div>
+          <div class="stat-card c-purple"><div class="stat-label">加载错误</div><div class="stat-value" id="plgErrors">—</div><div class="stat-foot" id="plgErrorsFoot">最近一次扫描</div></div>
         </div>
 
         <div class="plg-statusbar">
@@ -720,10 +782,18 @@
     <div class="modal-actions"><button class="btn btn-ghost" id="pwdCancel">取消</button><button class="btn btn-primary" id="pwdSave">保存</button></div>
   </div></div>
 
+<!-- 居中确认框：替代原生 confirm（原生框在部分浏览器贴顶显示、长提示也不好读）。
+     层级在表单弹窗之上，遮罩点击 = 取消。 -->
+<div class="modal hidden" id="confirmModal"><div class="modal-mask"></div>
+  <div class="modal-body cfm-body"><h3 id="cfmTitle">请确认</h3>
+    <div class="cfm-msg" id="cfmMsg"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cfmCancel">取消</button><button class="btn btn-primary" id="cfmOk">确定</button></div>
+  </div></div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/marked.min.js"></script>
 <script src="/static/vendor/purify.min.js"></script>
-<script src="/static/app.js?v=20261116d"></script>
+<script src="/static/app.js?v=20261119beta9"></script>
 </body>
 </html>

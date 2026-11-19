@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import sys
+import threading
 import time
 from urllib.parse import quote
 
@@ -34,6 +35,8 @@ import store
 import chatlog
 import followup
 import logfiles
+import media_store
+import phone_mon
 import textutil
 from admin import cfg, confedit, contacts, moments, pricing, proc
 from admin import kb as kbm
@@ -41,7 +44,7 @@ from admin import kb as kbm
 SECRET_FILE = os.path.join(BASE_DIR, ".admin_secret")
 SESSION_COOKIE = "wxbot_admin_session"
 # 应用版本号：改这里即可，侧栏徽标 / 页面标题 / /api/sysinfo 同步生效
-APP_VERSION = "V1.1.0"
+APP_VERSION = "V1.1.1-beta7"
 
 
 def main_log_path():
@@ -110,25 +113,43 @@ app.config["SESSION_COOKIE_NAME"] = SESSION_COOKIE
 
 # ---------------------------------------------------------------- 登录 / 安全
 
-_fails = {}
+_fails = {}                 # ip -> [失败时间戳]；gunicorn 多线程下需串行访问
+_fails_lock = threading.Lock()
 _FAIL_WINDOW = 300
 _FAIL_MAX = 5
+_FAIL_IPS_MAX = 5000        # 记录上限：防止伪造 X-Forwarded-For 的请求把字典撑爆
 
 
 def _client_ip():
+    """取客户端 IP。
+
+    优先 X-Forwarded-For 首段（后台常挂在 Nginx 后面）；直连时用 remote_addr。
+    ⚠️ 该头可被客户端伪造，所以限流只能当「降低暴力破解速度」用，
+    真正的防线是强口令 + 不要把 7780 直接暴露到公网。
+    """
     x = request.headers.get("X-Forwarded-For") or ""
     return (x.split(",")[0].strip() if x else request.remote_addr or "?")
 
 
 def _throttled(ip):
     now = time.time()
-    arr = [t for t in _fails.get(ip, []) if now - t < _FAIL_WINDOW]
-    _fails[ip] = arr
-    return len(arr) >= _FAIL_MAX
+    with _fails_lock:
+        arr = [t for t in _fails.get(ip, []) if now - t < _FAIL_WINDOW]
+        if arr:
+            _fails[ip] = arr
+        else:
+            _fails.pop(ip, None)         # 窗口内无失败记录就不再占一个 key
+        if len(_fails) > _FAIL_IPS_MAX:  # 兜底：超上限时整体清一遍过期项
+            for k in [k for k, v in _fails.items() if not v]:
+                _fails.pop(k, None)
+        return len(arr) >= _FAIL_MAX
 
 
 def _note_fail(ip):
-    _fails.setdefault(ip, []).append(time.time())
+    with _fails_lock:
+        _fails.setdefault(ip, []).append(time.time())
+        if len(_fails) > _FAIL_IPS_MAX:
+            _fails.clear()               # 极端情况宁可重置计数，也不无限增长
 
 
 def login_required(fn):
@@ -319,7 +340,9 @@ def api_status():
         out["plugin"] = {"reachable": True, "self": self_id,
                          "self_name": contacts.self_nickname(self_id),
                          "wechatReady": h.get("wechatReady"),
-                         "webhook": h.get("webhook"), "version": h.get("version")}
+                         "webhook": h.get("webhook"),
+                         "alertPushUrl": h.get("alertPushUrl"),
+                         "version": h.get("version")}
         # 早期修订：授权状态单独一路 GET /api/license，插件离线时不再发请求。
         # 授权过期会主动关掉插件 HTTP 侦听，此时 health 也会失败，走下面 except。
         try:
@@ -332,8 +355,13 @@ def api_status():
         out["plugin"]["self_name"] = contacts.cached_self_nickname()
     base = (c.get("server") or {}).get("public_base_url") or "http://127.0.0.1:29999"
     tok = (c.get("webhook") or {}).get("token") or ""
-    out["webhook_suggest"] = base.rstrip("/") + "/webhook" + (
-        "?token=" + tok if tok else "")
+    q = ("?token=" + tok) if tok else ""
+    out["webhook_suggest"] = base.rstrip("/") + "/webhook" + q
+    # 1.1.1-beta1：告警独立端点，与消息 webhook 同基址不同路径
+    out["alert_suggest"] = base.rstrip("/") + "/alert" + q
+    # 手机活跃监控（探活推算）+ 媒体存储概览
+    out["phone"] = phone_mon.state()
+    out["media"] = media_store.stats()
     out["main_service"] = main
     return _ok(**out)
 
@@ -769,6 +797,94 @@ def api_set_webhook():
         return _err("设置失败（手机在线吗？）：%s" % e)
 
 
+@app.route("/api/contacts/alert", methods=["POST"])
+@login_required
+def api_set_alert():
+    """把告警地址写进手机插件的 /api/alert（1.1.1-beta1，与消息推送独立）。
+
+    告警只走这个地址（掉线 / 授权 / 地址测试），为空表示清除、只保留设备本地
+    通知。默认写入主服务的独立 /alert 端点；test=1 时让插件发一条测试告警。
+    """
+    raw = _body().get("url")
+    url = str(raw).strip() if raw is not None else None
+    test = bool(_body().get("test"))
+    if url is None:
+        _, _, _ = _main_cfg()
+        c = cfg.read_config()
+        pub = (c.get("server") or {}).get("public_base_url") or "http://127.0.0.1:29999"
+        tok = (c.get("webhook") or {}).get("token") or ""
+        url = pub.rstrip("/") + "/alert" + ("?token=" + tok if tok else "")
+    try:
+        res = contacts.set_alert(url, test=test)
+        phone_mon.set_alert_info(url)
+        enabled = None
+        if isinstance(res, dict):
+            enabled = res.get("networkAlertEnabled")
+        phone_mon.set_alert_info(url, enabled=enabled)
+        msg = "已设置插件告警地址" + ("（已发测试告警）" if test else "")
+        return _ok(message=msg, url=url)
+    except Exception as e:
+        return _err("设置失败（手机在线吗？）：%s" % e)
+
+
+@app.route("/api/media/recent")
+@login_required
+def api_media_recent():
+    """分页查询图片与文件流水（1.1.1-beta2：分页 + 时间参数）。
+
+    query: chat / chat_name / wxid / minutes（默认 30；传 0 或 all=1 = 全部）/
+           kind(image|file) / chat_type(group|private) / page（默认 1）/
+           page_size（默认 50，最大 500）
+    """
+    q = request.args
+    try:
+        minutes = int(q.get("minutes", 30))
+    except (TypeError, ValueError):
+        minutes = 30
+    all_time = minutes <= 0 or str(q.get("all") or "") in ("1", "true", "yes")
+    try:
+        page = int(q.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(q.get("page_size", 50))
+    except (TypeError, ValueError):
+        page_size = 50
+    d = media_store.query_page(
+        chat=q.get("chat") or None,
+        chat_name=q.get("chat_name") or None,
+        wxid=q.get("wxid") or None,
+        minutes=minutes,
+        kind=q.get("kind") or None,
+        chat_type=q.get("chat_type") or None,
+        page=page, page_size=page_size,
+        all_time=all_time)
+    return _ok(items=d["items"], total=d["total"], page=d["page"],
+               page_size=d["page_size"], pages=d["pages"], all_time=d["all_time"],
+               expired=d.get("expired", 0), stats=media_store.stats())
+
+
+@app.route("/api/media/file")
+@login_required
+def api_media_file():
+    """预览/下载一张已落盘的图片或文件（1.1.1-beta1）。
+
+    只允许访问 media_store 配置的 images_dir / files_dir 下的文件，
+    防止路径穿越读取任意文件。
+    """
+    p = str(request.args.get("path") or "").strip()
+    if not p:
+        abort(404)
+    ap = os.path.realpath(p)
+    roots = [os.path.realpath(media_store.CFG["images_dir"]),
+             os.path.realpath(media_store.CFG["files_dir"])]
+    if not any(ap == r or ap.startswith(r + os.sep) for r in roots):
+        abort(404)
+    if not os.path.isfile(ap):
+        abort(404)
+    return send_file(ap)
+
+
 @app.route("/api/plugin/license")
 @login_required
 def api_plugin_license():
@@ -1157,9 +1273,18 @@ def api_llm_export():
 def api_contacts_sync():
     try:
         r = contacts.sync_all()
-        adminlog("同步通讯录 群=%s 好友=%s user=%s", r["groups"], r["friends"], session.get("uid"))
-        return _ok(message="同步完成：%d 个群、%d 位好友" % (r["groups"], r["friends"]),
-                   groups=r["group_list"], friends=r["friend_list"])
+        adminlog("同步通讯录 群=%s 好友=%s 替换群=%s 替换好友=%s user=%s",
+                 r["groups"], r["friends"], r.get("groups_replaced"),
+                 r.get("contacts_replaced"), session.get("uid"))
+        parts = ["同步完成：%d 个群、%d 位好友" % (r["groups"], r["friends"])]
+        if not r.get("groups_replaced", True):
+            parts.append("手机未返回群列表，已保留原有群聊缓存")
+        if not r.get("contacts_replaced", True):
+            parts.append("手机未返回好友列表，已保留原有好友缓存")
+        return _ok(message="；".join(parts),
+                   groups=r["group_list"], friends=r["friend_list"],
+                   groups_replaced=r.get("groups_replaced"),
+                   contacts_replaced=r.get("contacts_replaced"))
     except Exception as e:
         return _err("同步失败（检查手机插件地址 / 手机是否在线）：%s" % e)
 
@@ -1189,14 +1314,15 @@ def api_contacts_members_export():
         d = contacts.group_members(chat, refresh=False)
     except Exception as e:
         return _err(str(e))
-    headers = ["群聊", "wxid", "显示名", "昵称", "备注", "群名片", "是否本人", "是否群主"]
+    headers = ["群聊", "wxid", "显示名", "昵称", "备注", "群名片", "是否本人", "是否群主", "是否管理员"]
     # 显示名必须和界面口径一致（app.js 的 shown_name）：
     # display_name → name → wxid。旧实现只写 name，导出里看到的是原始昵称，
     # 和表格里显示的群名片 / 自定义显示名对不上。
     rows = [[d.get("group_name") or chat, m.get("wxid"),
              m.get("display_name") or m.get("name") or m.get("wxid"),
              m.get("nick_name"), m.get("remark"), m.get("group_nick"),
-             "是" if m.get("is_self") else "", "是" if m.get("is_owner") else ""]
+             "是" if m.get("is_self") else "", "是" if m.get("is_owner") else "",
+             "是" if m.get("is_admin") else ""]
             for m in d.get("members") or []]
     name = (d.get("group_name") or chat).replace("/", "_")
     return _csv("群成员-%s-%s.csv" % (name, time.strftime("%Y%m%d")), headers, rows)
@@ -1230,6 +1356,65 @@ def api_contacts_friend_detail():
     try:
         return _ok(**contacts.friend_detail(request.args.get("wxid") or ""))
     except (ValueError, OSError) as e:
+        return _err(e)
+
+
+# ------------------------------------------------ 社交信息：备注 / 群昵称（1.1.1-beta2）
+# 三个写接口都代理手机插件第 10 章，默认 dryRun=0（真写）；传 dryRun=1 可预演。
+# 成功判据是插件回读的 confirmed，响应里一并回给前端做提示。
+
+@app.route("/api/contacts/friends/remark", methods=["POST"])
+@login_required
+def api_contacts_friend_remark():
+    b = _body()
+    if "remark" not in b:
+        return _err("缺少 remark（清空备注请传空串）")
+    dry = bool(b.get("dryRun"))
+    try:
+        r = contacts.set_friend_remark(b.get("wxid"), b.get("remark"), dry_run=dry)
+        adminlog("改好友备注 wxid=%s 新值=%r dryRun=%s confirmed=%s user=%s",
+                 (b.get("wxid") or ""), r.get("after"), dry, r.get("confirmed"),
+                 session.get("uid"))
+        return _ok(**r)
+    except (ValueError, RuntimeError) as e:
+        return _err(e)
+
+
+@app.route("/api/contacts/groups/nickname", methods=["POST"])
+@login_required
+def api_contacts_group_nickname_self():
+    """改自己在群里的昵称（群内其他人可见，前端已二次确认）。"""
+    b = _body()
+    if "nickname" not in b:
+        return _err("缺少 nickname（清空群昵称请传空串）")
+    dry = bool(b.get("dryRun"))
+    try:
+        r = contacts.set_group_nickname_self(b.get("chat"), b.get("nickname"),
+                                            dry_run=dry)
+        adminlog("改本人群昵称 chat=%s 新值=%r dryRun=%s confirmed=%s user=%s",
+                 b.get("chat"), r.get("after"), dry, r.get("confirmed"),
+                 session.get("uid"))
+        return _ok(**r)
+    except (ValueError, RuntimeError) as e:
+        return _err(e)
+
+
+@app.route("/api/contacts/groups/member/remark", methods=["POST"])
+@login_required
+def api_contacts_group_member_remark():
+    """改群成员备注（v1.2.10-beta67 起走好友备注通道，全局生效，无需群主/管理员）。"""
+    b = _body()
+    if "remark" not in b:
+        return _err("缺少 remark（清空备注请传空串）")
+    dry = bool(b.get("dryRun"))
+    try:
+        r = contacts.set_group_member_remark(b.get("chat"), b.get("wxid"),
+                                            b.get("remark"), dry_run=dry)
+        adminlog("改群成员备注 chat=%s wxid=%s 新值=%r dryRun=%s confirmed=%s user=%s",
+                 b.get("chat"), b.get("wxid"), r.get("after"), dry,
+                 r.get("confirmed"), session.get("uid"))
+        return _ok(**r)
+    except (ValueError, RuntimeError) as e:
         return _err(e)
 
 

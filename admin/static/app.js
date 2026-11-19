@@ -34,12 +34,17 @@
         });
     });
   }
+  /* 结果提示：正常结果停留 6s，警告 / 错误 8s（改备注这类提示文案较长，
+     3.6s 经常没读完就消失）。点一下可立即关掉。 */
   function toast(msg, kind) {
     var el = document.createElement('div');
     el.className = 'toast ' + (kind === 'err' ? 'err' : (kind === 'warn' ? 'warn' : ''));
     el.textContent = msg;
+    el.title = '点击关闭';
+    var ms = (kind === 'err' || kind === 'warn') ? 8000 : 6000;
+    var timer = setTimeout(function () { el.remove(); }, ms);
+    el.addEventListener('click', function () { clearTimeout(timer); el.remove(); });
     $('toastWrap').appendChild(el);
-    setTimeout(function () { el.remove(); }, 3600);
   }
   function fail(e) { toast(e.message || String(e), 'err'); }
   function listStr(v) { return (v || []).join('、'); }
@@ -86,7 +91,7 @@
   var currentView = 'dashboard';
   // 二级菜单分组：一级只负责展开/收起，真正的视图仍由 data-view 子项切换
   var NAV_GROUPS = {
-    logs: ['records', 'chatlog', 'apicalls', 'llm', 'logs'],
+    logs: ['records', 'chatlog', 'media', 'apicalls', 'llm', 'logs'],
     kb: ['policies', 'knowledge'],
     system: ['groups', 'private', 'config', 'models']
   };
@@ -106,6 +111,7 @@
     dashboard: ['运行监控', '主服务、手机插件与今日消息统计'],
     records: ['对话记录', '按日期、场景、结果查询与导出'],
     chatlog: ['聊天记录', '插件收到的原始消息归档，按系统配置保留 1~12 个月'],
+    media: ['媒体文件', '群聊/私聊的图片与文件，按群名/wxid 检索，支持全部与分页'],
     llm: ['AI 用量', '大模型调用记录、token 与费用统计'],
     models: ['AI 大模型', '新增 / 编辑大模型，设置默认模型'],
     apicalls: ['API 记录', '知识库 HTTP 接口的每一次调用（含失败）'],
@@ -223,7 +229,7 @@
     if (name === 'moments') syncMomViewportH();
     var L = {
       dashboard: loadDashboard, records: loadRecords, chatlog: loadChatLog,
-      groups: loadGroups,
+      media: loadMedia, groups: loadGroups,
       private: loadPrivate, policies: loadPolicies, contacts: loadContacts,
       knowledge: loadKnowledge,
       config: function () { loadConfig(false); loadFollowup(); },
@@ -364,6 +370,7 @@
       x.addEventListener('change', function () { updateMultiCount(x.dataset.multi); });
     });
     $('formModal').classList.remove('hidden');
+    setFormBusy(false);             // 上次提交可能留下「保存中…」，每次打开都复位
     if (afterRender) afterRender();
   }
   function collectForm(fields) {
@@ -379,6 +386,37 @@
     return out;
   }
   function closeForm() { $('formModal').classList.add('hidden'); formSave = null; }
+  /* 提交中把「保存」置灰并改成「保存中…」，避免连点造成重复写入手机微信；
+     取消按钮一起禁掉，防止请求在途时把弹窗关掉又看不到失败原因。 */
+  var FORM_SAVE_LABEL = '保存';
+  function setFormBusy(busy) {
+    var b = $('formSave');
+    if (!b) return;
+    b.disabled = !!busy;
+    b.textContent = busy ? '保存中…' : FORM_SAVE_LABEL;
+    if ($('formCancel')) $('formCancel').disabled = !!busy;
+  }
+  /* 居中确认框：替代原生 confirm（原生框贴顶显示、长文案也难读）。
+     返回 Promise<boolean>；点取消 / 遮罩 / Esc 都是 false。 */
+  var cfmResolve = null;
+  function askConfirm(msg, opts) {
+    opts = opts || {};
+    if (cfmResolve) cfmResolve(false);          // 上一个没关就先当取消，避免挂住
+    $('cfmTitle').textContent = opts.title || '请确认';
+    $('cfmMsg').textContent = msg;
+    $('cfmOk').textContent = opts.okText || '确定';
+    $('cfmCancel').textContent = opts.cancelText || '取消';
+    $('confirmModal').classList.remove('hidden');
+    $('cfmOk').focus();
+    return new Promise(function (resolve) {
+      cfmResolve = function (v) {
+        cfmResolve = null;
+        $('confirmModal').classList.add('hidden');
+        resolve(v);
+      };
+    });
+  }
+  function closeConfirm(v) { if (cfmResolve) cfmResolve(!!v); }
   function openDetail(title, html, extra) {
     $('detailTitle').textContent = title;
     $('detailBody').innerHTML = html;
@@ -660,11 +698,33 @@
       lPillEl.className = 'count-pill' +
         (lState === 'active' ? '' :
           (lState === 'expired' || lState === 'invalid' || p.license_error ? ' bad' : ' warn'));
+      // 1.1.1-beta1：手机活跃监控（探活 + 收到消息推算，服务端跨进程共享）
+      var ph = d.phone || {};
+      var activePill = $('dashPhoneActive');
+      if (ph.online) {
+        activePill.textContent = '活跃中';
+        activePill.className = 'count-pill';
+      } else {
+        activePill.textContent = '已离线';
+        activePill.className = 'count-pill bad';
+      }
+      function durText(sec) {
+        sec = Math.max(0, Math.floor(sec || 0));
+        if (sec < 60) return sec + ' 秒';
+        var min = Math.floor(sec / 60), s = sec % 60;
+        if (min < 60) return min + ' 分 ' + s + ' 秒';
+        var h = Math.floor(min / 60);
+        return h + ' 小时 ' + (min % 60) + ' 分';
+      }
       $('dashPlugin').innerHTML = kv([
         ['当前微信号', p.self || m.self_wxid || '—'],
         ['当前微信昵称', p.self_name || '—'],
         ['微信就绪', p.wechatReady ? '是' : '否'],
-        ['插件版本', p.version || '—'], ['当前推送地址', p.webhook || '（未设置）'],
+        ['插件版本', p.version || '—'],
+        ['上次活跃时间', ph.last_active_str || '—'],
+        ['后台连续运行', ph.online ? durText(ph.continuous_seconds) : '已断开（当前未连续在线）'],
+        ['当前推送地址', p.webhook || '（未设置）'],
+        ['当前告警地址', p.alertPushUrl || ph.alert_url || '（未设置）'],
         ['激活状态', lText],
         ['到期日期', lic.expire || '—'],
         ['剩余天数', (lic.daysLeft === undefined || lic.daysLeft === null) ? '—' : lic.daysLeft + ' 天'],
@@ -679,7 +739,15 @@
       $('stPolicyDocs').textContent = (s.policies || 0) + ' / ' + (s.docs || 0);
       $('stGroups').textContent = s.group_rules || 0;
       $('stPrivate').textContent = s.private_rules || 0;
-      $('hookSuggest').textContent = d.webhook_suggest || '—';
+      // 地址输入框：优先回显插件当前地址，没有则用本机建议地址；
+      // 用户手动改过的值在刷新前的同一次会话内保留，不被自动回显覆盖。
+      var hookInput = $('hookUrl'), alertInput = $('alertUrl');
+      if (hookInput && !hookInput.dataset.dirty) {
+        hookInput.value = p.webhook || d.webhook_suggest || '';
+      }
+      if (alertInput && !alertInput.dataset.dirty) {
+        alertInput.value = p.alertPushUrl || ph.alert_url || d.alert_suggest || '';
+      }
       $('miniStatus').innerHTML = '<span class="dot ' + (m.reachable && p.reachable ? 'dot-green' : 'dot-red') +
         '"></span><span class="mini-status-text">' + (m.reachable ? '服务在线' : '服务离线') + '</span>';
     }).catch(fail);
@@ -787,6 +855,95 @@
         '</tr>';
       }).join('') : emptyRow(8, '暂无聊天记录');
     }).catch(fail);
+  }
+
+  /* ------------------------------ 媒体文件（图片/文件，全部 + 分页） ------------------------------ */
+  var mediaPage = 1, mediaMaxPage = 1;
+  function mediaPageSize() {
+    var el = $('mediaPageSize');
+    return el ? (Number(el.value) || 50) : 50;
+  }
+  function mediaParams() {
+    var p = new URLSearchParams();
+    [['mediaChatName', 'chat_name'], ['mediaChat', 'chat'], ['mediaWxid', 'wxid'],
+      ['mediaMinutes', 'minutes'], ['mediaKind', 'kind'], ['mediaChatType', 'chat_type']].forEach(function (x) {
+      var el = $(x[0]); if (!el) return;
+      var v = el.value.trim(); if (v) p.set(x[1], v);
+    });
+    // 时间范围默认「全部」：minutes 为空时后端按不限时间处理
+    p.set('page', mediaPage);
+    p.set('page_size', mediaPageSize());
+    return p;
+  }
+  function fmtBytes(n) {
+    n = Number(n || 0);
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+  function loadMedia() {
+    api('/api/media/recent?' + mediaParams()).then(function (d) {
+      var st = d.stats || {};
+      $('mediaIndexCount').textContent = num(st.index_count);
+      $('mediaFileCount').textContent = num(st.file_count);
+      $('mediaFileBytes').textContent = fmtBytes(st.file_bytes);
+      $('mediaResultCount').textContent = num(d.total);
+      // 分页信息：第 X / Y 页 · 共 N 条
+      mediaPage = Math.max(1, d.page || 1);
+      mediaMaxPage = Math.max(1, d.pages || 1);
+      $('mediaPgInfo').textContent = '第 ' + mediaPage + ' / ' + mediaMaxPage + ' 页 · 共 ' +
+        num(d.total) + ' 条' + (d.expired ? '（含 ' + d.expired + ' 条已过期）' : '');
+      if ($('mediaPrev')) $('mediaPrev').disabled = mediaPage <= 1;
+      if ($('mediaNext')) $('mediaNext').disabled = mediaPage >= mediaMaxPage;
+      var items = d.items || [];
+      $('mediaBody').innerHTML = items.length ? items.map(function (r) {
+        var scene = r.chat_type === 'group' ? '群聊' : (r.chat_type === 'private' ? '私聊' : (r.chat_type || '—'));
+        var kindTag = r.kind === 'image' ? tag(false, '图片', '图片') : tag(false, '文件', '文件');
+        // 图片画质：thumb/preview 用醒目提醒，避免用户误以为存的是原图
+        var quality = '';
+        if (r.kind === 'image' && r.tier_label) {
+          var low = (r.tier === 'thumb' || r.tier === 'preview');
+          var qcls = low ? 'media-quality-low' : 'media-quality-ok';
+          quality = '<div class="' + qcls + '" title="画质档位：' + esc(r.tier || '') + '">' +
+            esc(r.tier_label) + (r.resolution ? ' ' + esc(r.resolution) : '') + '</div>';
+        }
+        // 可预览直接做成链接：图片和文件都可点开（文件走同源 send_file，浏览器按类型打开/下载）
+        var status = r.available && r.path
+          ? '<a class="tag tag-reply media-preview-link" href="/api/media/file?path=' +
+            encodeURIComponent(r.path) + '" target="_blank" rel="noopener" title="点击预览/打开">可预览</a>'
+          : '<span class="muted">已过期</span>';
+        // 会话 / 发送者都显示两行：第一行名称，第二行 ID
+        var chatName = r.chat_name || r.chat || '—';
+        var chatCell = '<div class="media-line-main">' + esc(chatName) + '</div>' +
+          (r.chat && r.chat !== chatName
+            ? '<div class="media-line-sub">' + esc(r.chat) + '</div>' : '');
+        var senderName = r.sender_name || r.wxid || '—';
+        var senderCell = '<div class="media-line-main">' + esc(senderName) + '</div>' +
+          (r.wxid && r.wxid !== senderName
+            ? '<div class="media-line-sub">' + esc(r.wxid) + '</div>' : '');
+        // 引用消息带图：场景列加角标，时间列用 title 提示引用消息的发送时间
+        var quoteBadge = r.via === 'quote'
+          ? '<span class="media-quote-badge" title="引用消息里的图片">引用</span>' : '';
+        var timeTitle = (r.via === 'quote' && r.sent_time)
+          ? ' title="引用发送时间：' + esc(r.sent_time) + '"' : '';
+        return '<tr>' +
+          '<td class="cell-time"' + timeTitle + '>' + esc(r.download_time) + '</td>' +
+          '<td class="media-scene-cell"><span class="chat-chip">' + esc(scene) + '</span>' + quoteBadge + '</td>' +
+          '<td class="media-cell-wide">' + chatCell + '</td>' +
+          '<td class="media-cell-wide">' + senderCell + '</td>' +
+          '<td>' + kindTag + quality + '</td>' +
+          '<td class="chat-text" title="' + esc(r.orig_name || '') + '">' + esc(r.orig_name || '—') + '</td>' +
+          '<td class="muted" title="' + esc(r.sha256 || '') + '">' + esc((r.hash_name || '').slice(0, 20)) + '…</td>' +
+          '<td class="muted media-size-cell">' + fmtBytes(r.size) + '</td>' +
+          '<td>' + status + (r.dedup ? '<div class="muted">哈希去重</div>' : '') + '</td></tr>';
+      }).join('') : emptyRow(9, '没有符合条件的图片 / 文件');
+    }).catch(fail);
+  }
+  function resetMediaFilters() {
+    ['mediaChatName', 'mediaChat', 'mediaWxid'].forEach(function (id) { $(id).value = ''; });
+    $('mediaMinutes').value = '0'; $('mediaKind').value = ''; $('mediaChatType').value = '';
+    if ($('mediaPageSize')) $('mediaPageSize').value = '50';
+    mediaPage = 1;
   }
 
   /* ------------------------------ AI 大模型管理 ------------------------------ */
@@ -1367,6 +1524,10 @@
         'referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">' : '') +
       '</span>';
   }
+  /* 写备注 / 群昵称后，后端缓存已即时回写，但页面上其它页签的 DOM 还是旧的。
+     这里打脏标记，切到对应页签时按需重载，避免「切过去看到旧名字」。 */
+  var contactsDirty = false;
+  function markContactsDirty() { contactsDirty = true; }
   function loadContacts() { loadCtGroups(); loadCtFriends(); }
   // 三个页签互斥：群聊 / 好友 / 查找（全量搜索）。搜索条与结果都在「查找」里。
   function ctSwitchTab(kind) {
@@ -1379,6 +1540,12 @@
       $(panes[k][1]).classList.toggle('hidden', !on);
     });
     if (kind === 'search' && $('ctSearchInput').focus) $('ctSearchInput').focus();
+    // 写操作之后各页签可能已过期：切到哪个就重载哪个
+    if (contactsDirty) {
+      if (kind === 'friends') loadCtFriends();
+      else if (kind === 'groups') loadCtGroups();
+      else if (kind === 'search') searchContacts();
+    }
   }
   /* 全量通讯录搜索：好友 / 群聊 / 群友，按 wxid、name（昵称、备注、群名片也算）匹配。
      只读本地同步缓存，不实时访问手机插件；结果里的「查看详情 / 查看群友」复用已有弹窗。 */
@@ -1394,7 +1561,10 @@
         ? '<button class="btn btn-ghost btn-sm" data-ctsmem="' +
           esc(r.kind === 'group' ? r.wxid : r.group_id) + '">查看群友</button>'
         : '<button class="btn btn-ghost btn-sm" data-ctsfr="' + esc(r.wxid) +
-          '">查看详情</button>';
+          '">查看详情</button>' +
+          (r.kind === 'friend'
+            ? '<button class="btn btn-ghost btn-sm" data-ctsfrremark="' + esc(r.wxid) +
+              '">改备注</button>' : '');
       return '<tr><td>' + avatarHtml(name, r.avatar) + '</td>' +
         '<td><span class="ct-kind ct-kind-' + esc(r.kind) + '">' + ctKindLabel(r.kind) +
         '</span></td><td><strong>' + esc(name) + '</strong></td>' +
@@ -1444,34 +1614,156 @@
   function loadCtFriends() {
     api('/api/contacts/friends').then(function (d) {
       $('ctFriendBody').innerHTML = d.items.length ? d.items.map(function (c) {
+        // 本人：插件的好友列表含自己，标出来；微信没有「给自己改备注」的通道，
+        // 所以本人的行只留「查看详情」，不给改备注按钮。
+        var remarkBtn = c.is_self ? ''
+          : '<button class="btn btn-ghost btn-sm" data-ctfrremark="' + esc(c.wxid) + '">改备注</button>';
+        // 企业成员（插件 uiClass=myEnterpriseMember）和普通好友同列，打「企业」标记，
+        // 免得跟个人好友混在一起分不清来源；wxid 形如 xxx@openim。
+        var entTag = c.ui_class === 'myEnterpriseMember'
+          ? '<span class="tag tag-ent">企业</span>' : '';
         return '<tr><td>' + avatarHtml(c.name || c.wxid, c.avatar) + '</td>' +
-          '<td><strong>' + esc(c.name || c.wxid) + '</strong></td>' +
+          '<td><strong>' + esc(c.name || c.wxid) + '</strong>' + entTag + '</td>' +
+          '<td>' + (c.is_self ? '<span class="tag tag-self">本人</span>' : '') + '</td>' +
           '<td><code>' + esc(c.wxid) + '</code></td><td>' + esc(c.nick_name || '—') + '</td>' +
           '<td>' + esc(c.remark || '—') + '</td><td>' + esc(c.source || '—') + '</td>' +
           '<td>' + esc(c.synced_str || '—') + '</td>' +
-          '<td><button class="btn btn-ghost btn-sm" data-ctfr="' + esc(c.wxid) + '">查看详情</button></td></tr>';
-      }).join('') : emptyRow(8, '暂无好友，点「从手机同步」拉取');
+          '<td><button class="btn btn-ghost btn-sm" data-ctfr="' + esc(c.wxid) + '">查看详情</button>' +
+          remarkBtn + '</td></tr>';
+      }).join('') : emptyRow(9, '暂无好友，点「从手机同步」拉取');
       $$('[data-ctfr]').forEach(function (b) {
         b.addEventListener('click', function () { showFriend(b.dataset.ctfr); });
       });
+      $$('[data-ctfrremark]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var wxid = b.dataset.ctfrremark;
+          var c = d.items.filter(function (x) { return x.wxid === wxid; })[0] || {};
+          editFriendRemark(wxid, c.remark || '', function () { loadCtFriends(); });
+        });
+      });
     }).catch(fail);
   }
+  /* 备注 / 群昵称统一编辑：走通用表单弹窗，提交成功才关窗、才提示。
+     三个接口都会**真的写到手机微信**（备注只自己可见，群昵称群内可见），
+     所以清空 / 群昵称变更都先确认一次；失败信息直接显示在弹窗里。 */
+  function openSocialEdit(o) {
+    openForm(o.title,
+      [{ key: 'value', label: o.label, type: 'text',
+         placeholder: o.placeholder || '留空表示清除', help: o.help }],
+      { value: o.value || '' },
+      function (data) {
+        var val = String(data.value || '').trim();
+        var ask = typeof o.confirmText === 'function' ? o.confirmText(val) : o.confirmText;
+        // 值没变就别再弹「对群里所有人可见」这种确认，直接提交（等于强制重写一次）
+        if (ask && val === String(o.value || '').trim()) ask = '';
+        var submit = function () {
+          return api(o.path, { method: 'POST', body: o.body(val) }).then(function (r) {
+            closeForm();
+            if (r.confirmed !== false) markContactsDirty();
+            toast(r.message || '已保存', r.confirmed === false ? 'warn' : '');
+            if (o.done) o.done(r);
+          });
+        };
+        if (!ask) return submit();
+        // 确认框弹出时先把按钮复位，别在后面露一个「保存中…」；
+        // 确定后再置灰，真正进入写手机的阶段。
+        setFormBusy(false);
+        return askConfirm(ask, { title: o.askTitle || '请确认写入手机微信' }).then(function (ok) {
+          if (!ok) return;
+          setFormBusy(true);
+          return submit();
+        });
+      });
+  }
+  function editFriendRemark(wxid, current, done) {
+    openSocialEdit({
+      title: '改好友备注', label: '备注（只自己可见）', value: current,
+      help: '备注会写入手机微信，只有你能看到；显示名会同步变成「备注 > 昵称 > wxid」。' +
+            '这是全局备注，该联系人在所有群里本机看到的显示名也会跟着变。留空保存即清除备注。',
+      path: '/api/contacts/friends/remark',
+      body: function (v) { return { wxid: wxid, remark: v }; },
+      confirmText: function (v) { return v ? '' : '确定要清除这个好友的备注吗？'; },
+      done: done
+    });
+  }
+  function editSelfGroupNick(chat, current, done) {
+    openSocialEdit({
+      title: '改我的群昵称', label: '群昵称', value: current,
+      help: '群昵称是你在该群的显示名，群内所有人都能看到；改完群里会出现一条修改提示。' +
+            '留空保存即清空群昵称（恢复微信昵称）。',
+      path: '/api/contacts/groups/nickname',
+      body: function (v) { return { chat: chat, nickname: v }; },
+      askTitle: '确认修改群昵称',
+      confirmText: function (v) {
+        return '群昵称对群里所有人可见，确定改成「' + (v || '（清空）') + '」吗？';
+      },
+      done: done
+    });
+  }
+  function editMemberRemark(chat, wxid, name, current, done) {
+    var notice = '这是全局好友备注：该群友在所有群中本机看到的显示名都将是该备注。';
+    openSocialEdit({
+      title: '改群成员备注 · ' + name, label: '备注（只自己可见）', value: current,
+      help: notice + ' 不要求群主 / 管理员权限，留空保存即清除备注。',
+      path: '/api/contacts/groups/member/remark',
+      body: function (v) { return { chat: chat, wxid: wxid, remark: v }; },
+      askTitle: '确认修改群成员备注',
+      confirmText: function (v) {
+        return notice + '\n\n确定把这个群友的备注' + (v ? '改成「' + v + '」' : '清除') + '吗？';
+      },
+      done: done
+    });
+  }
   /* 群成员弹窗：表头点击排序；显示名统一为 display_name → name → wxid，
-     与 CSV 导出的「显示名」列口径保持一致。 */
-  var memRows = [], memSort = { key: '', dir: 1 };
+     与 CSV 导出的「显示名」列口径保持一致。
+     操作列：本人 → 只能改我的群昵称（10.1）；其他成员 → 改备注（走全局好友备注
+     通道，不要求群主 / 管理员）。改他人群昵称在微信 8.0.80 没有客户端通道，
+     插件 v1.2.10-beta67 起已下线该入口，所以不提供。 */
+  var memRows = [], memSort = { key: '', dir: 1 }, memChat = '', memRole = {};
+  function memRoleLabel() {
+    if (!memRole) return '未知（缓存里没有本人记录）';
+    if (memRole.isOwner) return '群主';
+    if (memRole.isAdmin) return '管理员';
+    return '普通成员';
+  }
   function renderMemberRows() {
     var body = $('ctMemBody');
     if (!body) return;
     var rows = sortRows(memRows, memSort);
     body.innerHTML = rows.length ? rows.map(function (m) {
+      // v1.2.10-beta67 起群成员备注 = 全局好友备注，不再看 canManage
+      var act = m.is_self
+        ? '<button class="btn btn-ghost btn-sm" data-memself="1">改我的群昵称</button>'
+        : '<button class="btn btn-ghost btn-sm" data-memremark="' + esc(m.wxid) + '">改备注</button>';
       return '<tr><td>' + avatarHtml(m.shown_name, m.avatar) + '</td>' +
         '<td>' + esc(m.shown_name) + '</td>' +
         '<td><code>' + esc(m.wxid) + '</code></td><td>' + esc(m.nick_name || '—') + '</td>' +
         '<td>' + esc(m.remark || '—') + '</td><td>' + esc(m.group_nick || '—') + '</td>' +
-        '<td>' + (m.is_self ? '本人' : '') + '</td><td>' + (m.is_owner ? '群主' : '') + '</td></tr>';
-    }).join('') : emptyRow(8, '没有成员数据');
+        '<td>' + (m.is_self ? '<span class="tag tag-self">本人</span>' : '') + '</td>' +
+        '<td>' + (m.is_owner ? '<span class="tag tag-admin">群主</span>' : '') + '</td>' +
+        '<td>' + (m.is_admin && !m.is_owner ? '<span class="tag tag-admin">管理员</span>' : '') + '</td>' +
+        '<td>' + act + '</td></tr>';
+    }).join('') : emptyRow(10, '没有成员数据');
+    $$('[data-memself]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var me = memRows.filter(function (x) { return x.is_self; })[0] || {};
+        editSelfGroupNick(memChat, me.group_nick || '', function () {
+          showGroupMembers(memChat, false);
+        });
+      });
+    });
+    $$('[data-memremark]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var wxid = b.dataset.memremark;
+        var m = memRows.filter(function (x) { return x.wxid === wxid; })[0] || {};
+        editMemberRemark(memChat, wxid, m.shown_name || wxid, m.remark || '', function () {
+          showGroupMembers(memChat, false);
+        });
+      });
+    });
   }
   function showGroupMembers(chat, refresh) {
+    memChat = chat;
     api('/api/contacts/groups/members?chat=' + encodeURIComponent(chat) + (refresh ? '&refresh=1' : ''))
       .then(function (d) {
         memRows = (d.members || []).map(function (m) {
@@ -1479,16 +1771,21 @@
             shown_name: m.display_name || m.name || m.wxid
           });
         });
+        memRole = d.role || {};
         memSort = { key: '', dir: 1 };
+        var me = memRows.filter(function (m) { return m.is_self; })[0] || {};
+        var roleTip = ' · 我的角色：<strong>' + esc(memRoleLabel()) + '</strong>' +
+          ' · 改备注是全局好友备注：<strong>该群友在所有群中本机看到的显示名都将是该备注</strong>';
         var html = '<div class="small muted" style="margin-bottom:10px">共 ' + esc(d.count) + ' 位群友' +
           (d.cached ? '（本地缓存）' : '（刚从手机同步）') + ' · 群 ID <code>' + esc(chat) + '</code>' +
-          ' · 点表头可排序</div>' +
+          ' · 我的群昵称：<strong>' + esc(me.group_nick || '（未设置）') + '</strong>' +
+          roleTip + ' · 点表头可排序</div>' +
           '<div class="table-wrap" style="max-height:70vh;overflow:auto"><table class="table"><thead><tr>' +
           '<th>头像</th>' +
           '<th data-sort="shown_name">显示名</th><th data-sort="wxid">wxid</th>' +
           '<th data-sort="nick_name">昵称</th><th data-sort="remark">备注</th>' +
           '<th data-sort="group_nick">群名片</th><th data-sort="is_self">本人</th>' +
-          '<th data-sort="is_owner">群主</th>' +
+          '<th data-sort="is_owner">群主</th><th data-sort="is_admin">管理员</th><th>操作</th>' +
           '</tr></thead><tbody id="ctMemBody"></tbody></table></div>';
         var extra = '<a class="btn btn-primary btn-sm" href="/api/contacts/groups/members/export?chat=' +
           encodeURIComponent(chat) + '">导出 CSV</a> ' +
@@ -1503,21 +1800,40 @@
     // 只用通讯录同步后的本地缓存：不再带 refresh=1 触发插件 /api/contacts?wxid=
     api('/api/contacts/friends/detail?wxid=' + encodeURIComponent(wxid)).then(function (d) {
       var l = d.local || {};
+      var isSelf = !!l.is_self;
+      var isEnt = l.ui_class === 'myEnterpriseMember';
       var html = '<div class="ct-detail-head">' +
         avatarHtml(l.name || wxid, l.avatar, 'lg') +
         '<div><strong>' + esc(l.name || wxid) + '</strong>' +
+        (isSelf ? ' <span class="tag tag-self">本人</span>' : '') +
+        (isEnt ? ' <span class="tag tag-ent">企业</span>' : '') +
         '<div class="muted small">' + esc(l.wxid || wxid) + '</div></div></div>' +
         '<div class="kv-list">' + kv([
         ['wxid', l.wxid || wxid], ['显示名', l.name || '—'],
         ['微信昵称', l.nick_name || '—'], ['备注', l.remark || '—'],
+        ['类型', isEnt ? '企业成员（企业微信）' : '微信好友'],
+        ['本人', isSelf ? '是（当前登录账号）' : '否'],
         ['来源', l.source || '—'], ['同步时间', l.synced_str || '—'],
         ['最近提问时间', l.last_seen || '—'], ['最近提问', l.last_question || '—']
       ]) + '</div>' +
-        '<div class="small muted" style="margin-top:12px">数据来自通讯录同步缓存；如需更新，请在「通讯录管理」页点「同步通讯录」。</div>';
-      openDetail('好友详情 · ' + (l.name || wxid), html, '');
+        '<div class="small muted" style="margin-top:12px">' +
+        (isSelf
+          ? '这是你自己的账号，微信没有「给自己改备注」的通道，所以这里不提供改备注。'
+          : '数据来自通讯录同步缓存；备注可直接在这里改，改完立即写入手机微信（只自己可见）。') +
+        '</div>';
+      openDetail('好友详情 · ' + (l.name || wxid), html,
+        isSelf ? '' : '<button class="btn btn-primary btn-sm" id="btnFrRemark">改备注</button>');
+      if (!isSelf) {
+        $('btnFrRemark').addEventListener('click', function () {
+          editFriendRemark(l.wxid || wxid, l.remark || '', function () {
+            showFriend(wxid); loadCtFriends();
+          });
+        });
+      }
     }).catch(fail);
   }
   function syncContacts() {
+    if (!confirm('从手机同步通讯录会先清空后台现有的群聊和好友缓存，再用手机上的最新数据整表重建。\n手机上已经删除的群聊 / 好友也会一并从后台移除。\n\n确定继续吗？')) return;
     api('/api/contacts/sync', { method: 'POST', body: {} }).then(function (d) {
       toast(d.message); loadCtGroups(); loadCtFriends(); refreshOptions();
     }).catch(fail);
@@ -1840,11 +2156,14 @@
       } else if (state === 'failed') {
         if (rebuildPoll) { clearInterval(rebuildPoll); rebuildPoll = null; }
         closeRebuildModal();
-        toast('索引重建失败：' + (r.error || detail || '未知错误'), 'err');
+        var why = r.error || detail || '未知错误';
+        rebuildLog('重建失败：' + why, 'rl-err');   // 弹窗虽关，日志留痕，下次打开能看到
+        toast('索引重建失败：' + why, 'err');
       }
     }).catch(function (e) {
       if (rebuildPoll) { clearInterval(rebuildPoll); rebuildPoll = null; }
       closeRebuildModal();
+      rebuildLog('重建状态查询失败：' + (e.message || e), 'rl-err');
       fail(e);
     });
   }
@@ -3156,20 +3475,40 @@
     });
   });
   $$('.modal-mask[data-close]').forEach(function (m) {
-    m.addEventListener('click', function () { closeForm(); closeDetail(); $('pwdModal').classList.add('hidden'); });
+    m.addEventListener('click', function () {
+      // 表单可能叠在详情弹窗上（通讯录里点「改备注」）：遮罩只关最上层，
+      // 否则关掉输入弹窗时连详情一起消失，用户得重新点进来。
+      if (!$('formModal').classList.contains('hidden')) { closeForm(); return; }
+      closeDetail(); $('pwdModal').classList.add('hidden');
+    });
   });
   $('formCancel').addEventListener('click', closeForm);
   $('detailClose').addEventListener('click', closeDetail);
   // 索引重建进度：关闭只是收起窗口，任务继续跑，轮询不停（完成时仍会 toast）
   $('rebuildClose').addEventListener('click', dismissRebuildModal);
   $('formSave').addEventListener('click', function () {
-    if (!formSave) return;
+    if (!formSave || $('formSave').disabled) return;
     var data = collectForm(window.__formFields || []);
     $('formError').classList.add('hidden');
+    setFormBusy(true);
     Promise.resolve(formSave(data)).catch(function (e) {
       $('formError').textContent = e.message || String(e);
       $('formError').classList.remove('hidden');
+    }).then(function () {
+      setFormBusy(false);           // 成功时弹窗已关，复位给下一次用
     });
+  });
+  $('cfmOk').addEventListener('click', function () { closeConfirm(true); });
+  $('cfmCancel').addEventListener('click', function () { closeConfirm(false); });
+  $('confirmModal').querySelector('.modal-mask').addEventListener('click', function () {
+    closeConfirm(false);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && cfmResolve) { closeConfirm(false); return; }
+    // 确认框开着时，回车 = 确定
+    if (e.key === 'Enter' && cfmResolve && e.target && e.target.tagName !== 'TEXTAREA') {
+      closeConfirm(true);
+    }
   });
 
   // 运行监控
@@ -3183,8 +3522,26 @@
   $('btnApiRefresh').addEventListener('click', function () {
     loadApiService(); toast('已刷新状态');
   });
+  // 用户输入后标记为 dirty，避免 loadDashboard 的自动回显覆盖正在编辑的内容
+  ['hookUrl', 'alertUrl'].forEach(function (id) {
+    var el = $(id);
+    if (el) el.addEventListener('input', function () { el.dataset.dirty = '1'; });
+  });
   $('btnSetHook').addEventListener('click', function () {
-    api('/api/contacts/webhook', { method: 'POST', body: {} }).then(function (d) {
+    var url = ($('hookUrl').value || '').trim();
+    api('/api/contacts/webhook', { method: 'POST', body: { url: url } }).then(function (d) {
+      toast(d.message); $('hookUrl').dataset.dirty = ''; loadDashboard();
+    }).catch(fail);
+  });
+  $('btnSetAlert').addEventListener('click', function () {
+    var url = ($('alertUrl').value || '').trim();
+    api('/api/contacts/alert', { method: 'POST', body: { url: url } }).then(function (d) {
+      toast(d.message); $('alertUrl').dataset.dirty = ''; loadDashboard();
+    }).catch(fail);
+  });
+  $('btnTestAlert').addEventListener('click', function () {
+    var url = ($('alertUrl').value || '').trim();
+    api('/api/contacts/alert', { method: 'POST', body: { url: url, test: true } }).then(function (d) {
       toast(d.message); loadDashboard();
     }).catch(fail);
   });
@@ -3227,6 +3584,18 @@
   })();
 
   // 对话记录
+  if ($('btnMediaSearch')) $('btnMediaSearch').addEventListener('click', function () { mediaPage = 1; loadMedia(); });
+  if ($('btnMediaReset')) $('btnMediaReset').addEventListener('click', function () { resetMediaFilters(); loadMedia(); });
+  if ($('mediaPrev')) $('mediaPrev').addEventListener('click', function () {
+    if (mediaPage > 1) { mediaPage--; loadMedia(); }
+  });
+  if ($('mediaNext')) $('mediaNext').addEventListener('click', function () {
+    if (mediaPage < mediaMaxPage) { mediaPage++; loadMedia(); }
+  });
+  if ($('mediaPageSize')) $('mediaPageSize').addEventListener('change', function () { mediaPage = 1; loadMedia(); });
+  ['mediaChatName', 'mediaChat', 'mediaWxid'].forEach(function (id) {
+    if ($(id)) $(id).addEventListener('keydown', function (e) { if (e.key === 'Enter') { mediaPage = 1; loadMedia(); } });
+  });
   $('btnRecSearch').addEventListener('click', function () { recPage = 1; loadRecords(); });
   $('btnRecReset').addEventListener('click', function () {
     ['recStart', 'recEnd', 'recKind', 'recChatType', 'recKeyword'].forEach(function (id) {
@@ -3316,7 +3685,7 @@
   bindSortHeaders('#view-private', prvSort, renderPrivateRows);
   $('btnGrpNew').addEventListener('click', function () { editGroup(null); });
   $('btnGrpSync').addEventListener('click', function () {
-    syncContacts(); toast('已同步群列表，可在新建配置时下拉选择');
+    syncContacts();
   });
   $('btnPrvNew').addEventListener('click', function () { editPrivate(null); });
   $('btnDenySave').addEventListener('click', function () {
@@ -3342,9 +3711,14 @@
   $('btnCtSearchClear').addEventListener('click', clearCtSearch);
   $('ctSearchBody').addEventListener('click', function (e) {
     var b = e.target && e.target.closest
-      ? e.target.closest('[data-ctsfr],[data-ctsmem]') : null;
+      ? e.target.closest('[data-ctsfr],[data-ctsmem],[data-ctsfrremark]') : null;
     if (!b) return;
-    if (b.dataset.ctsfr) showFriend(b.dataset.ctsfr);
+    if (b.dataset.ctsfrremark) {
+      var r = ctSearchRows.filter(function (x) { return x.wxid === b.dataset.ctsfrremark; })[0] || {};
+      editFriendRemark(b.dataset.ctsfrremark, r.remark || '', function () {
+        searchContacts(); loadCtFriends();
+      });
+    } else if (b.dataset.ctsfr) showFriend(b.dataset.ctsfr);
     else if (b.dataset.ctsmem) showGroupMembers(b.dataset.ctsmem);
   });
 

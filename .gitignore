@@ -54,3 +54,6 @@ data/knowledge/_verify_*.md
 models/
 models/**
 models
+
+# 知识库文档附带的图片属于业务资产，不随仓库分发
+data/knowledge/docs/

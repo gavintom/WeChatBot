@@ -304,7 +304,9 @@ os.chdir(base)
 import yaml
 _p = os.environ.get("WXBOT_CONFIG") or "data/config.yaml"
 if not os.path.isfile(_p):
-    _p = "config.yaml.example"
+    _p = "data/config.yaml.example"
+if not os.path.isfile(_p):
+    _p = "config.yaml.example"          # 历史位置，兼容老部署
 cfg = yaml.safe_load(open(_p, encoding="utf-8"))
 from brain import HybridRAGBrain
 import store
@@ -375,8 +377,9 @@ def ask(question, timeout=180, policy=None):
     if len(question) > 2000:
         raise ValueError("问题过长（最多 2000 字）")
     from admin import cfg as _cfg
-    if not os.path.isfile(_cfg.CONFIG_PATH) and not os.path.isfile(
-            os.path.join(BASE_DIR, "config.yaml.example")):
+    if not os.path.isfile(_cfg.CONFIG_PATH) and not any(
+            os.path.isfile(os.path.join(BASE_DIR, p))
+            for p in ("data/config.yaml.example", "config.yaml.example")):
         return {"ok": False, "error": "找不到 config.yaml，无法测试"}
 
     py = os.environ.get("KF_PYTHON") or sys.executable

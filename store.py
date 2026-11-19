@@ -14,6 +14,7 @@ WAL 模式保证「一边写流水、一边看后台」互不阻塞。
 """
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -211,6 +212,8 @@ CREATE TABLE IF NOT EXISTS wx_contacts (
     remark    TEXT,
     type      TEXT,
     is_group  INTEGER NOT NULL DEFAULT 0,
+    is_self   INTEGER NOT NULL DEFAULT 0,
+    ui_class  TEXT,
     source    TEXT,
     detail    TEXT,
     avatar    TEXT,
@@ -226,6 +229,7 @@ CREATE TABLE IF NOT EXISTS wx_group_members (
     display_name TEXT,
     is_self      INTEGER NOT NULL DEFAULT 0,
     is_owner     INTEGER NOT NULL DEFAULT 0,
+    is_admin     INTEGER NOT NULL DEFAULT 0,
     avatar       TEXT,
     synced_at    REAL,
     PRIMARY KEY (group_id, wxid)
@@ -549,7 +553,6 @@ def _default_policy_id():
 
 
 def save_policy(data):
-    import json
     d = data or {}
     name = str(d.get("name") or "").strip()
     if not name:
@@ -662,8 +665,17 @@ def init_db():
                 # plugin：老流水没有「插件来源」维度，保持 NULL（前端归到「—」）
                 "events": [("n_images", "INTEGER"), ("plugin", "TEXT")],
                 # v2 通讯录 / 群成员带 avatar CDN 直链，老库缺列时补上
-                "wx_contacts": [("avatar", "TEXT")],
-                "wx_group_members": [("avatar", "TEXT")],
+                "wx_contacts": [("avatar", "TEXT"),
+                                # 好友列表含自己（插件 friends[] 的 isSelf），
+                                # 本人这一行要标出来且禁止改备注
+                                ("is_self", "INTEGER NOT NULL DEFAULT 0"),
+                                # 插件 6.4 的分类：friend / myEnterpriseMember …
+                                # 企业成员不在默认 friend 类里，靠这列区分并打标
+                                ("ui_class", "TEXT")],
+                "wx_group_members": [("avatar", "TEXT"),
+                                     # 群管理员标记（插件 v1.2.10-beta11 的 isAdmin），
+                                     # 用于显示「管理员」并判断能否改成员备注
+                                     ("is_admin", "INTEGER NOT NULL DEFAULT 0")],
             }
             for _t, _add in _migrations.items():
                 _cols = {r["name"] for r in conn.execute("PRAGMA table_info(%s)" % _t)}
@@ -1429,25 +1441,96 @@ def save_contacts(contacts):
             if not wxid:
                 continue
             conn.execute("INSERT INTO wx_contacts(wxid,name,nick_name,remark,type,is_group,"
-                         "source,detail,avatar,synced_at) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                         "is_self,ui_class,source,detail,avatar,synced_at) "
+                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
                          "ON CONFLICT(wxid) DO UPDATE SET name=excluded.name, "
                          "nick_name=excluded.nick_name, remark=excluded.remark, "
                          "type=excluded.type, is_group=excluded.is_group, "
+                         "is_self=excluded.is_self, ui_class=excluded.ui_class, "
                          "source=excluded.source, detail=excluded.detail, "
                          "avatar=excluded.avatar, synced_at=excluded.synced_at",
                          (wxid, c.get("name") or "", c.get("nickName") or "",
                           c.get("remark") or "", c.get("type") or "",
-                          1 if c.get("isGroup") else 0, c.get("source") or "",
+                          1 if c.get("isGroup") else 0,
+                          1 if c.get("isSelf") else 0,
+                          c.get("uiClass") or "",
+                          c.get("source") or "",
                           json.dumps(c, ensure_ascii=False),
                           _avatar_url(c.get("avatar")), now))
     _write_many(_do)
 
 
 def list_friends():
-    rows = _rows("SELECT * FROM wx_contacts WHERE is_group=0 ORDER BY name, wxid")
+    rows = _rows("SELECT * FROM wx_contacts WHERE is_group=0 "
+                 "ORDER BY is_self DESC, name, wxid")
     for r in rows:
         r["synced_str"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["synced_at"] or 0))
+        r["is_self"] = bool(r.get("is_self"))
+        # 企业成员（uiClass=myEnterpriseMember）与普通好友同表，靠 ui_class 区分；
+        # 老库刚迁移时该列可能为空，回落到 detail JSON 里的 uiClass。
+        if not r.get("ui_class"):
+            try:
+                r["ui_class"] = (json.loads(r.get("detail") or "{}").get("uiClass") or "")
+            except Exception:
+                r["ui_class"] = ""
     return rows
+
+
+def replace_contacts_catalog(groups, contacts):
+    """全量替换通讯录缓存：先清空旧的群聊 / 好友 / 群成员，再写入本次同步结果。
+
+    与 save_groups/save_contacts 的增量 upsert 不同：手机端已删除的群 / 好友
+    在同步后应从后台一并消失，所以整表重建。三张表在同一个事务里完成，
+    避免「清空成功但写入失败」导致通讯录短暂变空。群成员缓存一并清除——
+    它属于群聊的从属数据，群都不在了留着就是孤儿，下次点进群会按需重拉。
+
+    空数据保护：某一类返回空列表时**保留该类的旧缓存**，不清空。手机快照
+    未就绪 / 临时故障时 groups() 可能返回 []，此时若照常清空会误删全部群聊。
+    返回 {"groups_replaced": bool, "contacts_replaced": bool} 告知调用方是否
+    真的替换了，供提示语区分。
+
+    ⚠️ 边界：这无法区分「手机真的删光了所有群」与「快照故障返回空」——前者
+    也会被当成保护而保留旧数据。宁可保留也不误删；确需清空全部请走手工入口。
+    """
+    import json
+    now = time.time()
+    groups = list(groups or [])
+    contacts = list(contacts or [])
+    groups_replaced = bool(groups)
+    contacts_replaced = bool(contacts)
+
+    def _do(conn):
+        if groups_replaced:
+            conn.execute("DELETE FROM wx_groups")
+            conn.execute("DELETE FROM wx_group_members")
+            for g in groups:
+                wxid = str(g.get("wxid") or g.get("id") or "").strip()
+                if not wxid:
+                    continue
+                conn.execute("INSERT INTO wx_groups(wxid,name,member_count,source,synced_at) "
+                             "VALUES(?,?,?,?,?)",
+                             (wxid, g.get("name") or "",
+                              int(g.get("memberCount") or g.get("member_count") or 0),
+                              g.get("source") or "", now))
+        if contacts_replaced:
+            conn.execute("DELETE FROM wx_contacts")
+            for c in contacts:
+                wxid = str(c.get("wxid") or "").strip()
+                if not wxid:
+                    continue
+                conn.execute("INSERT INTO wx_contacts(wxid,name,nick_name,remark,type,is_group,"
+                             "is_self,ui_class,source,detail,avatar,synced_at) "
+                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (wxid, c.get("name") or "", c.get("nickName") or "",
+                              c.get("remark") or "", c.get("type") or "",
+                              1 if c.get("isGroup") else 0,
+                              1 if c.get("isSelf") else 0,
+                              c.get("uiClass") or "",
+                              c.get("source") or "",
+                              json.dumps(c, ensure_ascii=False),
+                              _avatar_url(c.get("avatar")), now))
+    _write_many(_do)
+    return {"groups_replaced": groups_replaced, "contacts_replaced": contacts_replaced}
 
 
 def avatar_map():
@@ -1476,6 +1559,8 @@ def get_contact(wxid):
     r = _one("SELECT * FROM wx_contacts WHERE wxid=?", (str(wxid or ""),))
     if r:
         import json
+        r["is_self"] = bool(r.get("is_self"))
+        r["is_group"] = bool(r.get("is_group"))
         try:
             r["detail"] = json.loads(r.get("detail") or "{}")
         except Exception:
@@ -1510,6 +1595,78 @@ def self_display_name(wxid=""):
     return ""
 
 
+# ---------------------------------------------------------------- 社交信息写回（备注 / 群昵称）
+# 手机插件改完备注 / 群昵称后会回读确认，但它的通讯录快照要等下一次 refresh 才重建。
+# 这里同步更新本地缓存，让后台列表立刻显示新值，避免「改完还是旧备注」的错觉。
+# 只动展示字段，不改 synced_at（那表示「上次从手机同步的时间」，改动它会让用户误以为同步过）。
+# 备注是全局的，统一走 update_remark_everywhere()，不再有「单好友 / 单群」两个入口。
+
+def _pick_name(remark, name, nick_name, wxid=""):
+    """全局显示名口径：备注 > 昵称 > 名称 > wxid。"""
+    for v in (remark, name, nick_name):
+        v = str(v or "").strip()
+        if v:
+            return v
+    return str(wxid or "")
+
+
+def update_remark_everywhere(wxid, remark):
+    """好友备注是**全局**的：改一次同步刷新好友表与该 wxid 的全部群成员行。
+
+    插件 v1.2.10-beta67 起，改群成员备注实际调 /api/contact/remark，改的是
+    「该群友在所有群里本机看到的备注」。只更新当前群会让其它群继续显示旧名。
+    返回 {"contacts": n, "members": n}（分别命中的行数）。
+    """
+    wxid = str(wxid or "").strip()
+    remark = str(remark or "").strip()
+    if not wxid:
+        return {"contacts": 0, "members": 0}
+    counts = {"contacts": 0, "members": 0}
+
+    def _do(conn):
+        r = conn.execute("SELECT nick_name FROM wx_contacts WHERE wxid=?",
+                         (wxid,)).fetchone()
+        if r:
+            conn.execute("UPDATE wx_contacts SET remark=?, name=? WHERE wxid=?",
+                         (remark, _pick_name(remark, r["nick_name"], "", wxid), wxid))
+            counts["contacts"] = 1
+        rows = conn.execute("SELECT group_id, name, nick_name, group_nick "
+                            "FROM wx_group_members WHERE wxid=?", (wxid,)).fetchall()
+        for m in rows:
+            display = str(m["group_nick"] or "").strip() or \
+                _pick_name(remark, m["nick_name"], m["name"], wxid)
+            conn.execute("UPDATE wx_group_members SET remark=?, display_name=? "
+                         "WHERE group_id=? AND wxid=?",
+                         (remark, display, m["group_id"], wxid))
+            counts["members"] += 1
+
+    _write_many(_do)
+    return counts
+
+
+def update_self_group_nick(group_id, wxid, nickname):
+    """改自己的群昵称后写回缓存（group_nick + display_name）。"""
+    group_id = str(group_id or "").strip()
+    wxid = str(wxid or "").strip()
+    nickname = str(nickname or "").strip()
+    if not group_id or not wxid:
+        return 0
+
+    def _do(conn):
+        r = conn.execute("SELECT name, nick_name, remark FROM wx_group_members "
+                         "WHERE group_id=? AND wxid=?", (group_id, wxid)).fetchone()
+        if not r:
+            return
+        display = nickname or _pick_name(r["remark"], r["name"], r["nick_name"], wxid)
+        conn.execute("UPDATE wx_group_members SET group_nick=?, display_name=? "
+                     "WHERE group_id=? AND wxid=?",
+                     (nickname, display, group_id, wxid))
+
+    _write_many(_do)
+    return 1 if _one("SELECT wxid FROM wx_group_members WHERE group_id=? AND wxid=?",
+                     (group_id, wxid)) else 0
+
+
 def save_group_members(group_id, members):
     now = time.time()
 
@@ -1519,16 +1676,18 @@ def save_group_members(group_id, members):
             if not wxid:
                 continue
             conn.execute("INSERT INTO wx_group_members(group_id,wxid,name,nick_name,remark,"
-                         "group_nick,display_name,is_self,is_owner,avatar,synced_at) "
-                         "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id,wxid) DO UPDATE SET "
+                         "group_nick,display_name,is_self,is_owner,is_admin,avatar,synced_at) "
+                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(group_id,wxid) DO UPDATE SET "
                          "name=excluded.name,nick_name=excluded.nick_name,remark=excluded.remark,"
                          "group_nick=excluded.group_nick,display_name=excluded.display_name,"
                          "is_self=excluded.is_self,is_owner=excluded.is_owner,"
+                         "is_admin=excluded.is_admin,"
                          "avatar=excluded.avatar,synced_at=excluded.synced_at",
                          (str(group_id), wxid, m.get("name") or "", m.get("nickName") or "",
                           m.get("remark") or "", m.get("groupNick") or "",
                           m.get("displayName") or m.get("name") or "",
                           1 if m.get("isSelf") else 0, 1 if m.get("isOwner") else 0,
+                          1 if m.get("isAdmin") else 0,
                           _avatar_url(m.get("avatar")), now))
     _write_many(_do)
 
@@ -1568,13 +1727,15 @@ def search_contacts(q, limit=200):
 
     # 好友 / 联系人缓存（is_group=0 是好友；带 is_group 的群也一并列出）
     for r in _rows(
-        "SELECT wxid,name,nick_name,remark,avatar,source,is_group,synced_at "
-        "FROM wx_contacts WHERE wxid LIKE ? ESCAPE '\\' "
+        "SELECT wxid,name,nick_name,remark,avatar,source,is_group,is_self,ui_class,"
+        "synced_at FROM wx_contacts WHERE wxid LIKE ? ESCAPE '\\' "
         "OR name LIKE ? ESCAPE '\\' OR nick_name LIKE ? ESCAPE '\\' "
         "OR remark LIKE ? ESCAPE '\\' LIMIT ?",
         (like, like, like, like, n)):
         kind = "group" if r.get("is_group") else "friend"
-        out.append(hit(r, ("wxid", "name", "nick_name", "remark"), kind))
+        out.append(hit(r, ("wxid", "name", "nick_name", "remark"), kind,
+                       {"ui_class": r.get("ui_class") or "",
+                        "is_self": bool(r.get("is_self"))}))
 
     # 群聊（独立群表，含成员数）
     for r in _rows(
@@ -1587,7 +1748,7 @@ def search_contacts(q, limit=200):
     # 群成员：同一个人在多个群里会出现多行，带上所属群名方便定位
     for r in _rows(
         "SELECT m.wxid,m.name,m.nick_name,m.remark,m.group_nick,m.display_name,"
-        "m.avatar,m.group_id,m.is_self,m.is_owner,m.synced_at,"
+        "m.avatar,m.group_id,m.is_self,m.is_owner,m.is_admin,m.synced_at,"
         "g.name AS group_name FROM wx_group_members m "
         "LEFT JOIN wx_groups g ON g.wxid=m.group_id "
         "WHERE m.wxid LIKE ? ESCAPE '\\' OR m.name LIKE ? ESCAPE '\\' "
@@ -1603,6 +1764,7 @@ def search_contacts(q, limit=200):
             "group_nick": r.get("group_nick") or "",
             "is_self": bool(r.get("is_self")),
             "is_owner": bool(r.get("is_owner")),
+            "is_admin": bool(r.get("is_admin")),
             "source": "groupMembers",
         })
         out.append(d)
@@ -1624,10 +1786,12 @@ def search_contacts(q, limit=200):
 
 def list_group_members(group_id):
     rows = _rows("SELECT * FROM wx_group_members WHERE group_id=? "
-                 "ORDER BY is_owner DESC, is_self DESC, display_name", (str(group_id),))
+                 "ORDER BY is_owner DESC, is_admin DESC, is_self DESC, display_name",
+                 (str(group_id),))
     for r in rows:
         r["is_self"] = bool(r["is_self"])
         r["is_owner"] = bool(r["is_owner"])
+        r["is_admin"] = bool(r.get("is_admin"))
     return rows
 
 

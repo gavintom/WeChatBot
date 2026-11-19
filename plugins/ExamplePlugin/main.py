@@ -38,6 +38,17 @@ class ExamplePlugin(PluginBase):
         if text == "/echo":
             ctx.reply("echo 由插件发出；STOP_PLUGINS 只挡后续插件，主链路继续")
             return STOP_PLUGINS
+        if text == "/我的文件":
+            # 1.1.1 新能力示例：取当前这个人最近 10 分钟发的图片/文件
+            items = ctx.recent_media(wxid=ctx.m.get("sender"), minutes=10)
+            if not items:
+                ctx.reply("最近 10 分钟没有收到你的图片或文件。")
+            else:
+                lines = ["%s：%s（%s）" % (
+                    "图" if it["kind"] == "image" else "文件",
+                    it["orig_name"], it["download_time"]) for it in items[:20]]
+                ctx.reply("最近 10 分钟收到你 %d 个：\n%s" % (len(items), "\n".join(lines)))
+            return STOP_ALL
         return CONTINUE
 
     @on_pre_answer(priority=60, kinds=("text",))

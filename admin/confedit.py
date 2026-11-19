@@ -89,7 +89,7 @@ def read(redact=False):
         text = f.read()
     try:
         data = yaml.safe_load(text) or {}
-    except yaml.YAMLError as e:
+    except yaml.YAMLError:
         data = None
     lines = secret_lines(text)
     if not redact:

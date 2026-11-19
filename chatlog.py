@@ -83,11 +83,6 @@ CREATE INDEX IF NOT EXISTS idx_chatmsg_sender ON chat_messages(sender);
 """
 
 
-def clear_config_cache():
-    """测试 / 手动清理时让下一次 config() 立刻重读配置文件。"""
-    _cfg_cache.update(ts=0.0, data=None)
-
-
 def config():
     """运行时读 chat_log 配置（30 秒缓存）；保留月数强制钳制到 1~12。"""
     now = time.time()
@@ -160,7 +155,6 @@ def _ensure():
 
     用独立的锁，避免和 init_db() 内部的 _write_lock 递归死锁。
     """
-    global _ensured
     if _ensured[0]:
         return
     with _ensure_lock:

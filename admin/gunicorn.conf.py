@@ -22,7 +22,9 @@ def _resolve_base_dir():
         cands.append(os.path.dirname(here))
         cands.append(here)
     cands.append(os.getcwd())
-    for marker in (os.path.join("data", "config.yaml"), "config.yaml.example"):
+    for marker in (os.path.join("data", "config.yaml"),
+                   os.path.join("data", "config.yaml.example"),
+                   "config.yaml.example"):
         for d in cands:
             if os.path.isfile(os.path.join(d, marker)):
                 return os.path.abspath(d)
@@ -38,7 +40,9 @@ try:
     import yaml
     _p = os.environ.get("WXBOT_CONFIG") or os.path.join(BASE_DIR, "data", "config.yaml")
     if not os.path.isfile(_p):
-        _p = os.path.join(BASE_DIR, "config.yaml.example")
+        _p = os.path.join(BASE_DIR, "data", "config.yaml.example")
+    if not os.path.isfile(_p):
+        _p = os.path.join(BASE_DIR, "config.yaml.example")   # 历史位置，兼容老部署
     _cfg = yaml.safe_load(open(_p, encoding="utf-8")) or {}
     _admin = _cfg.get("admin") or {}
 except Exception:

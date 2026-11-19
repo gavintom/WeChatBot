@@ -23,6 +23,7 @@
 「导入了但少了图」比「导入失败」糟糕得多，运营根本不会发现。
 """
 import hashlib
+import importlib.util
 import io
 import os
 import re
@@ -59,14 +60,12 @@ class ConvertError(Exception):
 
 def _need(ext):
     """确保依赖可用，否则抛带 pip 命令的明确错误。"""
+    mod = "fitz" if ext in PDF_EXT else ("docx" if ext in WORD_EXT else "openpyxl")
     try:
-        if ext in PDF_EXT:
-            import fitz                      # noqa: F401
-        elif ext in WORD_EXT:
-            import docx                      # noqa: F401
-        else:
-            import openpyxl                   # noqa: F401
-    except ImportError:
+        found = importlib.util.find_spec(mod) is not None
+    except (ImportError, ValueError):
+        found = False
+    if not found:
         pkg = _PKG_HINT.get(ext, "相关依赖")
         raise ConvertError("缺少依赖 %s，无法转换 %s 文件。请在服务器上执行："
                            "pip install %s" % (pkg, ext.lstrip("."), pkg))
@@ -284,7 +283,6 @@ def _docx_para_images(para, doc):
     VML 是 Word 2007 之前的老写法（`w:pict/v:imagedata`），现在仍能在客户
     大量使用的旧文档里遇到，只认 DrawingML 会漏图。
     """
-    from docx.oxml.ns import qn
     R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
     rids = []
     for blip in para._p.iter(
@@ -564,7 +562,7 @@ def _pdf_page_items(page, writer, body_size, sizes):
         blocks = []
     for b in blocks:
         try:
-            x0, y0, y1, txt = b[0], b[1], b[3], b[4]
+            x0, y0, txt = b[0], b[1], b[4]
         except (IndexError, TypeError):
             continue
         if len(b) > 6 and b[6] == 1:          # block_type 1 = 图片块，文本为空

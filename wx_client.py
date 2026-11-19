@@ -21,6 +21,8 @@
   GET  /api/moments/{timeline,user}/{gethead,getnext}   朋友圈时间线 / 好友主页
   GET  /api/moments/media             朋友圈图片 / 视频二进制
   POST /api/moments/{like,unlike,comment}               点赞 / 取消赞 / 评论
+  POST /api/contact/remark            改备注（好友 / 群成员共用；全局生效，只自己可见）
+  POST /api/group/nickname            改自己的群昵称（v1.2.10-beta67 起，旧 /self 与 /member 已下线）
 
 **通讯录 v2 与发送路径变更（早期修订）**：旧 `/api/groups`、
 `/api/groupmember`、`/api/contacts?scope=...`、`/api/send` 全部 404 且**无别名**；
@@ -105,6 +107,20 @@ class WXClient:
     def set_webhook(self, url):
         return self._req("POST", "/api/webhook", body={"url": str(url or "")})
 
+    def set_alert(self, url, test=False):
+        """POST /api/alert：设置告警推送地址（1.1.1-beta1，与消息推送独立）。
+
+        告警地址为空表示清除；test=1 时插件会向新地址发一条测试告警。
+        """
+        body = {"url": str(url or "")}
+        if test:
+            body["test"] = 1
+        return self._req("POST", "/api/alert", body=body)
+
+    def alert_status(self, timeout=None):
+        """GET /api/alert：读取 {alertPushUrl, networkAlertEnabled, webhook}。"""
+        return self._req("GET", "/api/alert", timeout=timeout)
+
     def license(self, timeout=None):
         """GET /api/license（现行协议）：授权状态、到期日、剩余天数、机器码。
 
@@ -147,19 +163,26 @@ class WXClient:
         isGroup/memberCount。旧的 /api/groups 已 404 且无别名。"""
         return (self._req("GET", "/api/contacts/groups", timeout=30).get("groups") or [])
 
-    def friends(self, wxid=None, name=None, timeout=30):
+    def friends(self, wxid=None, name=None, ui_class=None, timeout=30):
         """GET /api/contacts/friends（6.4）。
 
-        无参数 → {"friends": [...], "count": n}；带 wxid/name → {"lookup": 统一反查结构}。
+        无 wxid/name → {"friends": [...], "count": n}；带 wxid/name → {"lookup": 统一反查结构}。
         好友池含自己，本机实测只有个位数条目是正常的（全量里的 stranger 不是好友）。
+
+        uiClass 指定分类（6.4 的过滤参数）：不传=微信好友，另外还有
+        `myEnterpriseMember`（企业成员）/ `enterpriseContact`（企微外部联系人）/
+        `officialAccount` / `all` 等。注意「企业成员」不在默认的 friend 类里，
+        要单独拉一次才能出现在好友列表。
         """
         p = {}
         if wxid:
             p["wxid"] = wxid
         if name:
             p["name"] = name
+        if ui_class:
+            p["uiClass"] = ui_class
         d = self._req("GET", "/api/contacts/friends", params=p or None, timeout=timeout)
-        if p:
+        if wxid or name:
             return {"lookup": d}
         return {"friends": d.get("friends") or [], "count": d.get("count", 0)}
 
@@ -201,6 +224,10 @@ class WXClient:
                 "owner": d.get("owner") or "",
                 "self": d.get("self") or "",
                 "isOwner": bool(d.get("isOwner")),
+                # v1.2.10-beta11：当前账号在该群的角色（含 isAdmin / canManage）
+                # 与管理员人数；旧版插件没有这两个字段，上层按缓存推断。
+                "role": d.get("role") or {},
+                "adminCount": int(d.get("adminCount") or 0),
                 "members": members,
                 "count": returned, "memberCount": total,
                 "truncated": bool(total and (returned < total or len(members) < total))}
@@ -209,6 +236,23 @@ class WXClient:
         """文档 7.1：无参数；旧版 all=1 已移除，未知 query 会被插件静默忽略。"""
         return (self._req("GET", "/api/chats", timeout=30).get("chats") or [])
 
+    def messages(self, chat=None, limit=20, timeout=30):
+        """文档 7.2：读取服务捕获的历史消息。
+
+        指定 chat 时只返回该会话；不传则跨会话（开销大）。插件对 limit<=0 或
+        >500 回落到 50，这里夹到 [1,500]。响应 messages[] 与推送字段一致，
+        含 quote / quoteResolved。消息写入异步，紧跟推送的查询可能短暂读不到。
+        """
+        try:
+            lim = max(1, min(500, int(limit)))
+        except (TypeError, ValueError):
+            lim = 20
+        params = {"limit": lim}
+        if chat:
+            params["chat"] = chat
+        d = self._req("GET", "/api/messages", params=params, timeout=timeout)
+        return (d.get("messages") or []) if isinstance(d, dict) else []
+
     def contact_lookup(self, wxid, timeout=30):
         """运行监控查当前微信昵称：走 /api/contacts/find 的全量库反查（6.5 / 6.6）。
 
@@ -216,6 +260,34 @@ class WXClient:
         match 字段已不存在，调用方按 matches[0] 取值。
         """
         return self.find_contact(wxid=wxid, timeout=timeout)
+
+    # ------------------------------------------------------------ 社交管理（v10）
+    # 插件 v1.2.10 起提供：好友备注 / 自己的群昵称 / 群成员备注。
+    # 三个都是**真实写操作**，插件的 dryRun 默认 1（预演）；本项目一律显式传
+    # dryRun，避免「忘了传就以为写成功」。判定成功一律看响应里的 confirmed
+    # （插件回读微信自己的数据得出），不看 callRet / 方法返回值。
+
+    def contact_remark(self, user, remark, dry_run=False, timeout=20):
+        """POST /api/contact/remark（10.3）：改好友备注，**只自己可见**。
+
+        `remark=""` 表示清除备注。返回 before / after / confirmed / callRet。
+        """
+        body = {"user": str(user or ""), "remark": str(remark or "")}
+        body["dryRun"] = 1 if dry_run else 0
+        return self._req("POST", "/api/contact/remark", body=body, timeout=timeout)
+
+    def group_nickname_self(self, chat, nickname, dry_run=False, timeout=20):
+        """POST /api/group/nickname（10.1）：改**自己**在该群的群昵称。
+
+        v1.2.10-beta67 起接口收敛：老的 `/self` 后缀已下线，且只做「改自己」
+        这一件事；改群成员昵称没有客户端通道。
+        `nickname=""` 表示清空群昵称。群内其他人可见（会出系统提示），
+        上层调用前应先确认。
+        """
+        body = {"chat": str(chat or ""), "nickname": str(nickname or "")}
+        body["dryRun"] = 1 if dry_run else 0
+        return self._req("POST", "/api/group/nickname", body=body,
+                         timeout=timeout)
 
     # ------------------------------------------------------------ 媒体
 
@@ -244,6 +316,59 @@ class WXClient:
         ext = {"audio/silk": "silk", "audio/octet-stream": "silk",
                "audio/amr": "amr", "image/png": "png", "image/jpeg": "jpg",
                "video/mp4": "mp4"}.get(mime, "bin")
+        return data, ext
+
+    def media_info(self, chat, local_id, timeout=18):
+        """GET /api/media?info=1：只取元信息（画质档位 / 分辨率），不取二进制。
+
+        不带 hd=1：本项目所有图片下载只用普通档位，不主动取高清原图。
+
+        返回 dict，额外带内部键 `_state`：
+          ok      —— 图已就绪，含 tier/width/height/bytes
+          pending —— 图还没下载到本机（插件返回 404 / ok:false），应稍后重试
+          error   —— 其它错误（手机离线等）
+        调用方据此决定「继续等清晰版」还是「放弃等待照常下载」。
+
+        注意超时：实测已缓存的图 info=1 约 0.07s 返回，但刚收到、微信还在
+        异步下载的图会阻塞约 12s（插件内部在等本机落盘）。默认 timeout 若设
+        5s，新图必超时被误判为 pending，后台复查会永远跳过。故默认给到
+        18s，覆盖这段等待。
+        """
+        try:
+            params = {"chat": chat, "localID": int(local_id), "info": 1}
+            d = self._req("GET", "/api/media", params=params,
+                          raw=False, timeout=timeout) or {}
+            d = dict(d)
+            d["_state"] = "ok" if d.get("ok") else "pending"
+            return d
+        except Exception as e:
+            msg = str(e)
+            state = "pending" if ("404" in msg or "not found" in msg.lower()) else "error"
+            return {"_state": state, "_error": msg[:120]}
+
+    def file(self, chat, local_id, timeout=30):
+        """取收到的文件（type=49 appType=file）二进制，返回 (bytes, ext)。
+
+        GET /api/file（文档 7.4）：按 chat + localID 回读。Content-Type 按扩展名
+        映射，未知回落 application/octet-stream；这里把常见 mime 反查成扩展名，
+        真正的扩展名兜底由 media_store 用 fileName 再校正。文件尚未下载到本机
+        时插件返回 404，由调用方记日志跳过，不影响消息链路。
+        """
+        params = {"chat": chat, "localID": int(local_id)}
+        data, mime = self._req("GET", "/api/file", params=params,
+                               raw=True, timeout=timeout)
+        ext = {
+            "application/pdf": "pdf", "application/zip": "zip",
+            "application/x-rar-compressed": "rar", "application/x-7z-compressed": "7z",
+            "application/msword": "doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+            "application/vnd.ms-excel": "xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+            "application/vnd.ms-powerpoint": "ppt",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+            "text/plain": "txt", "text/csv": "csv",
+            "application/octet-stream": "bin",
+        }.get(mime, "bin")
         return data, ext
 
     # ------------------------------------------------------------ 发送
@@ -337,12 +462,6 @@ class WXClient:
             p["original"] = 0
         return self._req("GET", "/api/moments/media", params=p,
                          raw=True, timeout=timeout)
-
-    def moments_media_info(self, tid, index=0, timeout=30):
-        """info=1 只取元信息 JSON（mediaType / mime / bytes / videoDuration）。"""
-        return self._req("GET", "/api/moments/media",
-                         params={"tid": str(tid), "index": int(index), "info": 1},
-                         timeout=timeout)
 
     def moments_like(self, tid, unlike=False, dry_run=False, timeout=30):
         """POST /api/moments/like | unlike（8.8 / 8.9）：真实社交动作，幂等。"""

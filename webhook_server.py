@@ -25,6 +25,7 @@ import os
 import re
 import contextvars
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,8 @@ import chatlog
 import followup
 import kbapi
 import logfiles
+import media_store
+import phone_mon
 import policy
 import store
 import textutil
@@ -61,7 +64,8 @@ def _load_config():
     """WXBOT_CONFIG 可指定别的配置文件（多环境 / 自动化测试用）。
 
     默认读 `data/config.yaml`（所有可变数据都在 data/，Docker 里单独挂卷）；
-    全新部署还没配置时回退到项目根的 `config.yaml.example` 模板。
+    全新部署还没配置时回退到配置模板（`data/config.yaml.example`，
+    根目录是历史位置，保留以兼容老部署）。
     """
     custom = os.environ.get("WXBOT_CONFIG")
     if custom and os.path.isfile(custom):
@@ -71,13 +75,14 @@ def _load_config():
     if os.path.isfile(p):
         with open(p, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
-    p = os.path.join(BASE_DIR, "config.yaml.example")
-    if os.path.isfile(p):
-        with open(p, encoding="utf-8") as f:
-            c = yaml.safe_load(f) or {}
-        print("[warn] 未找到 data/config.yaml，已使用 config.yaml.example（请复制后填写密钥）")
-        return c
-    raise RuntimeError("缺少 data/config.yaml / config.yaml.example")
+    for tpl in (os.path.join(BASE_DIR, "data", "config.yaml.example"),
+                os.path.join(BASE_DIR, "config.yaml.example")):
+        if os.path.isfile(tpl):
+            with open(tpl, encoding="utf-8") as f:
+                c = yaml.safe_load(f) or {}
+            print("[warn] 未找到 data/config.yaml，已使用 %s（请复制后填写密钥）" % tpl)
+            return c
+    raise RuntimeError("缺少 data/config.yaml / data/config.yaml.example")
 
 
 CFG = _load_config()
@@ -92,6 +97,7 @@ TCFG = CFG.get("transfer") or {}
 PCFG = CFG.get("plugins") or {}
 PSCFG = PCFG.get("scheduler") or {}          # P3 定时任务
 PHCFG = PCFG.get("http_routes") or {}        # P3 /ext 插件扩展路由
+MCFG = CFG.get("media_store") or {}          # 1.1.1-beta1 图片/文件存储
 
 def _reply_gap():
     """连续两条回复（文字→配图、配图→配图）之间的间隔，秒。
@@ -179,6 +185,36 @@ _setup_log()
 store.init_db()
 WX = WXClient(WCFG.get("base_url") or "http://127.0.0.1:18888",
               WCFG.get("token") or "", WCFG.get("timeout") or 10, log=log.info)
+# 图片/文件存储：默认开启，可用 media_store.enabled: false 关闭。
+MEDIA_ENABLED = bool(MCFG.get("enabled", True))
+# 引用消息里的图片也自动下载（文档 7.2.1 quoteResolved）；可用 quote_image: false 关闭。
+QUOTE_IMAGE_ENABLED = bool(MCFG.get("quote_image", True))
+if MEDIA_ENABLED:
+    # 兼容旧配置 index_ttl_minutes：现在流水不再按 30 分钟删，改为 record_ttl_days；
+    # 没配 record_ttl_days 就与磁盘文件同寿（file_ttl_days）。
+    try:
+        _m_ttl = int(MCFG.get("index_ttl_minutes", 30)) * 60
+    except (TypeError, ValueError):
+        _m_ttl = 30 * 60
+    try:
+        _f_ttl = int(MCFG.get("file_ttl_days", 7)) * 86400
+    except (TypeError, ValueError):
+        _f_ttl = 7 * 86400
+    try:
+        _r_ttl = int(MCFG.get("record_ttl_days", 0)) * 86400
+    except (TypeError, ValueError):
+        _r_ttl = 0
+    if _r_ttl <= 0:
+        _r_ttl = _f_ttl
+    media_store.configure(index_ttl=_m_ttl, file_ttl=_f_ttl, record_ttl=_r_ttl,
+                          images_dir=MCFG.get("images_dir"),
+                          files_dir=MCFG.get("files_dir"),
+                          image_wait=MCFG.get("image_wait"),
+                          image_poll=MCFG.get("image_poll"))
+    log.info("媒体存储已启用 | 图片=%s | 文件=%s | 流水保留=%s天 | 画质等待=%ss(轮询%ss)",
+             media_store.CFG["images_dir"], media_store.CFG["files_dir"],
+             media_store.CFG["record_ttl"] // 86400,
+             media_store.CFG["image_wait"], media_store.CFG["image_poll"])
 SELF_WXID_CFG = str(WCFG.get("self_wxid") or "").strip()
 _self_cache = {"wxid": SELF_WXID_CFG, "ts": 0.0}
 
@@ -212,10 +248,15 @@ def plugin_snapshot(ttl=10):
         h = WX.health(timeout=1.2)
         data = {"reachable": True, "self": h.get("self") or "",
                 "webhook": h.get("webhook") or "",
+                "alertPushUrl": h.get("alertPushUrl") or "",
                 "wechatReady": h.get("wechatReady"),
                 "version": h.get("version") or ""}
+        # 1.1.1-beta1：探活成功记一次活跃（服务端推算手机在线时长的依据）
+        phone_mon.touch(now, source="health")
     except Exception as e:
         data = {"reachable": False, "error": str(e)[:120]}
+        # 探活失败不等于离线：只在连续失败时翻转，避免抖动清零连续时长。
+        phone_mon.mark_offline(now)
     _plugin_cache.update({"ts": now, "data": data})
     return dict(data)
 
@@ -287,6 +328,10 @@ class _PluginHost:
 
     def remember(self, uid, question, answer):
         return _remember(uid, question, answer)
+
+    def recent_media(self, **kw):
+        """插件查询最近 N 分钟内某人/某群的图片与文件（1.1.1-beta1）。"""
+        return media_store.query(**kw)
 
     def broadcast(self, chat, text, source=""):
         """定时任务主动发消息：不是「回复」，所以不 @、不引用、不刷续聊窗口，
@@ -486,7 +531,8 @@ def _plugin_payload(reload_error=""):
 CONV_FILE = os.environ.get("WXBOT_CONV") or os.path.join(BASE_DIR, "data", ".conversations.json")
 MEM_LIMIT = int(BCFG.get("memory_limit") or 10)
 MEM_PERSIST = BCFG.get("memory_persist", True)
-_conv_lock = threading.Lock()
+_conv_lock = threading.Lock()      # 保护内存字典
+_save_lock = threading.Lock()      # 串行化落盘（同一时刻只允许一个线程写文件）
 _conversations = {}
 
 
@@ -507,15 +553,33 @@ def _load_conversations():
 
 
 def _save_conversations():
+    """整份记忆原子落盘。
+
+    快照在 `_conv_lock` 内取、写文件在 `_save_lock` 内串行，且每次用唯一
+    临时文件名：多线程同时 `_remember()` 时，若共用 `CONV_FILE + ".tmp"`，
+    会互相写坏内容或在前一个线程 `os.replace` 后找不到 tmp，导致记忆文件
+    损坏（下次启动整份记忆丢失）。
+    """
     if not MEM_PERSIST:
         return
-    tmp = CONV_FILE + ".tmp"
     try:
         with _conv_lock:
             snapshot = {k: list(v) for k, v in _conversations.items()}
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False)
-        os.replace(tmp, CONV_FILE)
+        with _save_lock:
+            folder = os.path.dirname(CONV_FILE) or "."
+            os.makedirs(folder, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".conversations.", suffix=".tmp",
+                                       dir=folder)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(snapshot, f, ensure_ascii=False)
+                os.replace(tmp, CONV_FILE)
+            except BaseException:
+                try:
+                    os.remove(tmp)         # 失败不留垃圾临时文件
+                except OSError:
+                    pass
+                raise
     except Exception as e:
         log.warning("对话记忆落盘失败: %s", e)
 
@@ -837,6 +901,24 @@ def _handle_message(m, ctx=None):
         _skip(m, match, "消息过期（超过 max_msg_age）")
         return
 
+    # 1.1.1-beta1：入站图片 / 文件落盘（哈希去重、7 天清理、30 分钟流水）。
+    # 放在所有回复分支之前，保证群聊 / 私聊里每张图、每个文件都被记录，
+    # 与是否触发 AI 回复无关；下载失败只记日志，不影响后续处理。
+    if MEDIA_ENABLED and media_store.is_media(m):
+        try:
+            media_store.ingest(m, WX, log=log.info)
+        except Exception as e:
+            log.warning("媒体存储异常（已忽略）: %s", e)
+
+    # 引用消息里的图片（文档 7.2.1）：只认推送自带的 quoteResolved，
+    # quote.type=3 且 found 时，用其 localID + mediaApi（普通档位，不带 hd=1）下载。
+    # 发送者/时间取引用消息本身（非原图作者），via='quote'。失败只记日志。
+    if MEDIA_ENABLED and QUOTE_IMAGE_ENABLED and media_store.is_media_ready_for_quote(m):
+        try:
+            media_store.ingest_quoted_image(m, WX, log=log.info)
+        except Exception as e:
+            log.warning("引用图片存储异常（已忽略）: %s", e)
+
     # H1：基础过滤之后、ASR 之前。命令解析 / 自定义黑名单 / 全量旁听。
     if _hook(ctx, "on_message", kind=kind):
         _plugin_takeover_event(m, ctx)
@@ -1039,8 +1121,13 @@ except Exception:
 
 # register() 的副作用是注册 /httpapi/* 路由；返回值（是否注册成功）无人读取
 kbapi.register(app, BRAIN_PROXY, brain_lock, log)
-# gunicorn 以 import 方式加载本模块（不走 __main__），预热必须在模块级启动
-threading.Thread(target=BRAIN.warmup, daemon=True, name="brain-warmup").start()
+# gunicorn 以 import 方式加载本模块（不走 __main__），预热必须在模块级启动。
+# brain.retrieval.warmup=false 可关闭：无 GPU 的机器加载 rerank 模型要 20~30s，
+# 关掉后第一次检索才加载（客户首条消息会等），但启动更快、内存占用更平缓。
+if (BCFG.get("retrieval") or {}).get("warmup", True):
+    threading.Thread(target=BRAIN.warmup, daemon=True, name="brain-warmup").start()
+else:
+    log.info("检索模型预热已关闭（brain.retrieval.warmup=false）")
 
 
 def _wh_auth_ok():
@@ -1097,8 +1184,35 @@ def webhook():
     if not store.dedup_check_and_mark(dedup,
                                       WHCFG.get("dedup_ttl") or 86400):
         return jsonify({"ok": True, "ignored": "duplicate"})
+    # 收到真实客户消息也算一次手机活跃（比 10 秒探活更及时）
+    phone_mon.touch(source="webhook")
     # 插件 postJSON 只有 10 秒超时，必须立即返回；AI 生成放到线程池
     POOL.submit(_async, payload)
+    return jsonify({"ok": True})
+
+
+@app.route("/alert", methods=["POST"])
+def alert():
+    """手机插件告警推送（1.1.1-beta1 独立端点，与消息 webhook 隔离）。
+
+    手机插件把告警地址（POST /api/alert）指向本端点后，掉线 / 授权提醒 /
+    地址测试等事件会推到这里。告警与业务消息走不同地址、不同处理链路：
+    这里只做鉴权 + 落日志/状态，不进去重、不进 AI、不回微信。
+    `background_offline` 事件会立即把手机标记为离线，让监控页的连续在线
+    时长及时归零（比探活轮询更快）。
+    """
+    if not _wh_auth_ok():
+        return jsonify({"ok": False, "error": "webhook token 无效"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "body 必须是 JSON object"}), 400
+    name = str(payload.get("alert") or "")
+    title = str(payload.get("title") or "")
+    body = str(payload.get("body") or "")
+    log.warning("手机告警 | 事件=%s | 标题=%s | 内容=%s",
+                name or "-", title or "-", _brief(body, 200))
+    if name == "background_offline":
+        phone_mon.mark_offline()
     return jsonify({"ok": True})
 
 
@@ -1146,7 +1260,6 @@ def internal_reload_status():
 @app.route("/internal/reload", methods=["POST"])
 def internal_reload():
     """后台改完知识库后调用：重新构造检索器（清缓存后重新建 BM25/向量索引）。"""
-    global BRAIN
     if not _internal_auth_ok():
         return jsonify({"ok": False, "error": "token 无效"}), 401
     if RELOAD.get("state") == "running":

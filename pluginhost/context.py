@@ -184,6 +184,24 @@ class PluginContext:
     def remember(self, question, answer, uid=None):
         return self._host.remember(uid or self._uid(), question, answer)
 
+    def recent_media(self, *, wxid=None, chat=None, chat_name=None,
+                     minutes=30, kind=None, chat_type=None, limit=200):
+        """获取某人 / 某会话最近 N 分钟（minutes<=0 表示不限时间，即全部）内的图片与文件。
+
+        返回 list[dict]，每项含 kind / orig_name / hash_name / sha256 /
+        download_time / downloaded_at / chat / chat_name / wxid / sender_name /
+        path（绝对路径，文件已过期时为 ""）/ available。按时间倒序。
+
+        典型用法：
+          ctx.recent_media(wxid=m["sender"], minutes=10)          # 这个人 10 分钟内发的
+          ctx.recent_media(chat=m["chat"], kind="file", minutes=30)  # 本群 30 分钟内的文件
+          ctx.recent_media(chat=m["chat"], minutes=0)             # 本群全部记录（默认保留 7 天）
+        不传任何过滤条件则返回全局最近 30 分钟的媒体。
+        """
+        return self._host.recent_media(
+            wxid=wxid, chat=chat, chat_name=chat_name, minutes=minutes,
+            kind=kind, chat_type=chat_type, limit=limit)
+
     # ------------------------------------------------------------ 产出提交
     def set_answer(self, text):
         """H4 直接给出答案 → 跳过 RAG+LLM，仍会走清洗、记忆、发送与流水。"""
@@ -238,6 +256,12 @@ class _BaseContext:
     def llm_chat(self, messages, **kw):
         """调用宿主内置大模型（不检索知识库）。语义见 PluginContext.llm_chat。"""
         return self._host.llm_chat(messages, **kw)
+
+    def recent_media(self, **kw):
+        """查询最近 30 分钟内某会话/某人的图片与文件，语义同
+        PluginContext.recent_media。定时任务 / HTTP 路由里同样可用。
+        """
+        return self._host.recent_media(**kw)
 
 
 class TaskContext(_BaseContext):

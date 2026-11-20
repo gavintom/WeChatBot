@@ -28,8 +28,8 @@ from flask import (Flask, abort, jsonify, redirect, render_template, request,
 import store
 from admin import (bp_config, bp_contacts, bp_kb, bp_media, bp_moments,
                    bp_plugins, bp_records, bp_sys, cfg)
-from admin.web import (APP_VERSION, BASE_DIR, SESSION_COOKIE, adminlog, body,
-                       fail, login_required, ok, secret_key)
+from admin.web import (APP_VERSION, ASSET_VER, BASE_DIR, SESSION_COOKIE, adminlog,
+                       body, fail, login_required, ok, secret_key)
 
 app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, "admin", "templates"),
@@ -45,6 +45,12 @@ app.config.update(
     MAX_CONTENT_LENGTH=32 * 1024 * 1024,
 )
 app.config["SESSION_COOKIE_NAME"] = SESSION_COOKIE
+
+
+@app.context_processor
+def _inject_asset_ver():
+    """所有模板统一拿到静态资源版本串，避免各模板各写一份、改样式时漏改导致旧缓存。"""
+    return {"asset_ver": ASSET_VER}
 
 
 # ---------------------------------------------------------------- 登录限流

@@ -5,10 +5,15 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.2-beta6**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2-beta7**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
+
+> **V1.1.2-beta7 更新要点**：静态资源缓存串**统一由一处管理**。
+> 以前 `index.html` 用 `?v=20261120beta6`、`login.html` / `error.html` 还停在 `?v=20261119`，
+> 改样式只改一处就会漏，浏览器容易拿旧 CSS 配新页面。现在三个模板统一写 `?v={{ asset_ver }}`，
+> 值来自 `admin/web.py` 的 `ASSET_VER`，发版只改这一行。
 
 > **V1.1.2-beta6 更新要点**：修复「对话记录」页**时间列挤住会话名**。
 > 时间列原本只占 8% 且在固定布局下 `nowrap`，`2026-11-20 22:03:15` 实际约 118px

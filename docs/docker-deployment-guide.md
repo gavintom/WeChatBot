@@ -229,7 +229,7 @@ docker logs -f wxbot
 | `wechat.base_url` | `http://192.0.2.71:18888` | 手机插件 HTTP 地址 |
 | `wechat.self_wxid` | `/api/health` 返回的 `self` | 建议填，换微信号必须改；群聊「@ 本机」判定更稳 |
 | `wechat.token` | 插件 `config.plist` 的 token | 插件没设就留空 |
-| `brain.external_llm.api_key / base_url / model` | `sk-xxx` / `https://api.deepseek.com/v1` / `deepseek-chat` | 也可在「AI 大模型」页纳管并选默认；群聊 / 私聊可各配一个（分场景模型） |
+| `brain.external_llm.api_key / base_url / model` | `sk-xxx` / `https://api.deepseek.com/v1` / `deepseek-chat` | 也可在「AI 大模型」页纳管并选默认；每条群聊/私聊配置可单独指定模型 |
 | `server.public_base_url` | `http://192.0.2.145:29999` | **手机能访问到的地址**，一键写 webhook 会用它拼接 |
 | `webhook.token` | 自定义随机串 | 建议开启，推送地址带 `?token=` |
 | `transfer.default_wxid / default_name` | `wxid_zhangsan` / `人工客服` | wxid 不填，群聊转人工不会 @ 人 |
@@ -242,10 +242,16 @@ docker logs -f wxbot
 > - 「系统配置」里的 `config.yaml` 是模块级读取，**改完要重启容器**（`docker restart wxbot`）；
 > - 例外：「群聊对话延续窗口」保存会文本级写回 `config.yaml` 并检查 mtime，**立即生效，无需重启**。
 >
-> **分场景模型（V1.1.2-beta2）**：群聊 / 私聊各选一个模型，优先级为
-> 「本次显式指定 > 场景模型 > 全局默认 > config.yaml」。每条应答都会在
-> `data/logs/app-*.log` 打一条 `AI 应答 | 场景=… | 模型=… | 纳管id=… | 来源=…`，
-> 同时写进 `llm_usage.scene`，「AI 用量 → 来源 / 场景」列可核对配置是否真的生效。
+> **每条配置选模型（V1.1.2-beta5）**：`group_rules.llm_id` / `private_rules.llm_id`
+> 让**每个群聊配置、每条私聊配置各自指定一个大模型**；不指定则跟随默认。
+> 生效顺序为「本条配置指定的模型 > 分场景兜底模型 > 全局默认 > config.yaml」。
+> 老库启动时自动补 `llm_id` 列（NULL = 不指定）；选的模型被停用/删除时自动回退默认，
+> 列表里标「已停用 / 模型已删除」。
+>
+> **分场景兜底模型（V1.1.2-beta2，可选）**：群聊 / 私聊各选一个**兜底**模型，
+> 只在这条消息命中的配置没有单独指定时才用。每条应答都会在 `data/logs/app-*.log` 打一条
+> `AI 应答 | 场景=… | 配置=… | 模型=… | 纳管id=… | 来源=override(本条配置)`，
+> 同时把使用的模型写进 `llm_usage`（`llm_id` / `scene`），可在「AI 用量」核对。
 >
 > **导出 / 导入模型配置（V1.1.2-beta3）**：「AI 大模型」页右上角可把整套配置导成 JSON
 > （含默认模型与群聊/私聊场景选择，引用按**模型名称**对齐，跨实例导入会自动映射到本机 id）。

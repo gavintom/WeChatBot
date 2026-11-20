@@ -222,6 +222,13 @@ def _ok(m, rule, trigger, wake_word, question):
         # 规则级能力开关（store 里两表默认 1，老库迁移后也是 1，行为不变）
         "need_transfer": bool(rule.get("need_transfer", True)),
         "need_kb": bool(rule.get("need_kb", True)),
+        # 本条群/私聊配置自己选的大模型（llm_models.id）；None = 不指定，
+        # 由 brain 按「场景默认 → 全局默认 → config.yaml」兜底。
+        # 选的模型被停用 / 删除时（llm_available=False）视同没选 —— 不能让一条
+        # 失效的模型配置把该群/私聊的回复降级到 config.yaml 或直接失败。
+        "llm_id": ((int(rule.get("llm_id") or 0)
+                    if rule.get("llm_available", True) else 0) or None),
+        "llm_name": rule.get("llm_name") or "",
         "rule": rule,
     }
 

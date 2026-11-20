@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS group_rules (
     -- 规则级能力开关：关掉转人工=直接回复；关掉知识库=跳过检索
     need_transfer  INTEGER NOT NULL DEFAULT 1,
     need_kb        INTEGER NOT NULL DEFAULT 1,
+    -- 本条群配置指定的大模型（llm_models.id）；NULL = 不指定，跟随场景/全局默认
+    llm_id         INTEGER,
     note           TEXT NOT NULL DEFAULT '',
     system_prompt  TEXT NOT NULL DEFAULT '',
     human_wxid     TEXT NOT NULL DEFAULT '',
@@ -122,6 +124,8 @@ CREATE TABLE IF NOT EXISTS private_rules (
     priority    INTEGER NOT NULL DEFAULT 0,
     need_transfer INTEGER NOT NULL DEFAULT 1,
     need_kb       INTEGER NOT NULL DEFAULT 1,
+    -- 本条私聊配置指定的大模型（llm_models.id）；NULL = 不指定，跟随场景/全局默认
+    llm_id      INTEGER,
     human_wxid  TEXT NOT NULL DEFAULT '',
     human_name  TEXT NOT NULL DEFAULT '',
     note        TEXT NOT NULL DEFAULT '',
@@ -646,17 +650,20 @@ def init_db():
             conn.executescript(SCHEMA)
             # 幂等迁移：老库缺列时补上（不改动任何已有数据）
             _migrations = {
+                # llm_id：v1.1.2-beta5 起「每条群/私聊配置各自选大模型」，老库保持 NULL
                 "group_rules": [("system_prompt", "TEXT NOT NULL DEFAULT ''"),
                                 ("quote_self_trigger", "INTEGER NOT NULL DEFAULT 1"),
                                 ("human_wxid", "TEXT NOT NULL DEFAULT ''"),
                                 ("human_name", "TEXT NOT NULL DEFAULT ''"),
                                 ("need_transfer", "INTEGER NOT NULL DEFAULT 1"),
-                                ("need_kb", "INTEGER NOT NULL DEFAULT 1")],
+                                ("need_kb", "INTEGER NOT NULL DEFAULT 1"),
+                                ("llm_id", "INTEGER")],
                 "private_rules": [("system_prompt", "TEXT NOT NULL DEFAULT ''"),
                                   ("need_transfer", "INTEGER NOT NULL DEFAULT 1"),
                                   ("need_kb", "INTEGER NOT NULL DEFAULT 1"),
                                   ("human_wxid", "TEXT NOT NULL DEFAULT ''"),
-                                  ("human_name", "TEXT NOT NULL DEFAULT ''")],
+                                  ("human_name", "TEXT NOT NULL DEFAULT ''"),
+                                  ("llm_id", "INTEGER")],
                 # 费用列：老库的 llm_usage / api_calls 没有 cost，补齐后历史行记 0
                 # llm_id：老流水没有「纳管模型」维度，保持 NULL（对照表里归到「未纳管/历史」）
                 # scene：分场景选模型（v1.1.2-beta2）后才有；老流水保持 NULL
@@ -727,7 +734,34 @@ def _json_list(value):
     return json.dumps(parse_list(value), ensure_ascii=False)
 
 
+def _rule_llm_id(value):
+    """规则里选定的大模型 id；0 / 空 = 不指定（None，跟随默认）。
+
+    只校验模型存在（停用的也允许保存，解析时自动回退），避免运营先停用再改配置
+    时被卡住；但 id 写错（比如页面停留太久、模型已被删）要明确报错，不能静默变成默认。
+    """
+    try:
+        mid = int(str(value or 0).strip() or 0)
+    except (TypeError, ValueError):
+        raise ValueError("大模型参数不合法")
+    if mid <= 0:
+        return None
+    if not _one("SELECT id FROM llm_models WHERE id=?", (mid,)):
+        raise ValueError("选择的大模型不存在，请刷新页面重新选择")
+    return mid
+
+
+def _llm_brief_map():
+    """id → {name, model, enabled}，给规则列表显示「这条配置用哪个模型」用。"""
+    try:
+        return {int(r["id"]): dict(r) for r in _rows(
+            "SELECT id,name,model,enabled FROM llm_models")}
+    except Exception:
+        return {}
+
+
 def _rules_with_policy(rows):
+    lm = _llm_brief_map()
     for r in rows:
         r["wake_words"] = _loads(r.get("wake_words"))
         r["allow_list"] = _loads(r.get("allow_list")) if "allow_list" in r else []
@@ -743,6 +777,16 @@ def _rules_with_policy(rows):
         r["system_prompt"] = r.get("system_prompt") or ""
         r["human_wxid"] = r.get("human_wxid") or ""
         r["human_name"] = r.get("human_name") or ""
+        # 本条配置指定的大模型：0 = 不指定（跟随默认）；指定了但模型被删/停用时
+        # 仍保留 id，前端显示「已停用」，生成时会回退到默认模型。
+        try:
+            mid = int(r.get("llm_id") or 0)
+        except (TypeError, ValueError):
+            mid = 0
+        r["llm_id"] = mid
+        m = lm.get(mid) if mid else None
+        r["llm_name"] = ("%s · %s" % (m["name"], m["model"])) if m else ""
+        r["llm_available"] = bool(m and m.get("enabled"))
     return rows
 
 
@@ -782,6 +826,8 @@ def save_group_rule(data):
     # 关掉转人工时人工接待一律清空，避免残留值以后被误用
     human_wxid = str(d.get("human_wxid") or "").strip() if need_transfer else ""
     human_name = str(d.get("human_name") or "").strip() if need_transfer else ""
+    # 本条群配置指定的大模型；不选（0/空）= 跟随场景/全局默认
+    llm_id = _rule_llm_id(d.get("llm_id"))
     now = time.time()
     vals = (gid, str(d.get("group_name") or "").strip(),
             _json_list(d.get("wake_words")), pid,
@@ -791,7 +837,7 @@ def save_group_rule(data):
             str(d.get("note") or "").strip(),
             str(d.get("system_prompt") or "").strip(),
             human_wxid, human_name,
-            1 if need_transfer else 0, 1 if need_kb else 0)
+            1 if need_transfer else 0, 1 if need_kb else 0, llm_id)
     rid = d.get("id")
     if rid:
         dup = _one("SELECT id FROM group_rules WHERE group_id=? AND id<>?", (gid, rid))
@@ -799,15 +845,15 @@ def save_group_rule(data):
             raise ValueError("群聊 ID 已存在")
         _write("UPDATE group_rules SET group_id=?,group_name=?,wake_words=?,policy_id=?,"
                "enabled=?,at_all_trigger=?,quote_self_trigger=?,note=?,system_prompt=?,"
-               "human_wxid=?,human_name=?,need_transfer=?,need_kb=?,updated_at=? "
+               "human_wxid=?,human_name=?,need_transfer=?,need_kb=?,llm_id=?,updated_at=? "
                "WHERE id=?", vals + (now, rid))
         return int(rid)
     if _one("SELECT id FROM group_rules WHERE group_id=?", (gid,)):
         raise ValueError("群聊 ID 已存在，请直接编辑该条配置")
     return _write("INSERT INTO group_rules(group_id,group_name,wake_words,policy_id,enabled,"
                   "at_all_trigger,quote_self_trigger,note,system_prompt,human_wxid,human_name,"
-                  "need_transfer,need_kb,created_at,updated_at) "
-                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
+                  "need_transfer,need_kb,llm_id,created_at,updated_at) "
+                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
 
 
 def delete_group_rule(rid):
@@ -841,6 +887,8 @@ def save_private_rule(data):
         raise ValueError("知识库策略不存在")
     human_wxid = str(d.get("human_wxid") or "").strip() if need_transfer else ""
     human_name = str(d.get("human_name") or "").strip() if need_transfer else ""
+    # 本条私聊配置指定的大模型；不选（0/空）= 跟随场景/全局默认
+    llm_id = _rule_llm_id(d.get("llm_id"))
     now = time.time()
     vals = (name, _json_list(d.get("wake_words")), _json_list(d.get("allow_list")),
             _json_list(d.get("deny_list")), pid,
@@ -848,18 +896,19 @@ def save_private_rule(data):
             int(d.get("priority") or 0), str(d.get("note") or "").strip(),
             str(d.get("system_prompt") or "").strip(),
             human_wxid, human_name,
-            1 if need_transfer else 0, 1 if need_kb else 0)
+            1 if need_transfer else 0, 1 if need_kb else 0, llm_id)
     rid = d.get("id")
     if rid:
         _write("UPDATE private_rules SET name=?,wake_words=?,allow_list=?,deny_list=?,"
                "policy_id=?,enabled=?,priority=?,note=?,system_prompt=?,"
-               "human_wxid=?,human_name=?,need_transfer=?,need_kb=?,updated_at=? WHERE id=?",
+               "human_wxid=?,human_name=?,need_transfer=?,need_kb=?,llm_id=?,updated_at=? "
+               "WHERE id=?",
                vals + (now, rid))
         return int(rid)
     return _write("INSERT INTO private_rules(name,wake_words,allow_list,deny_list,policy_id,"
                   "enabled,priority,note,system_prompt,human_wxid,human_name,"
-                  "need_transfer,need_kb,created_at,updated_at) "
-                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
+                  "need_transfer,need_kb,llm_id,created_at,updated_at) "
+                  "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now))
 
 
 def delete_private_rule(rid):

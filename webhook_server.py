@@ -1065,15 +1065,18 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
         log.info("插件直接作答，跳过 RAG+LLM | 问=%s", _brief(question))
     else:
         t0 = time.time()
-        # 场景决定用哪个大模型：群聊/私聊可在后台各配一个（留空则跟随全局默认）。
+        # 用哪个大模型：**本条群/私聊配置**里选的优先（规则级），没选才走
+        # 场景默认（群聊/私聊整体）→ 全局默认 → config.yaml。
+        # scene 仍然传，作为规则没指定时的兜底。
         scene = m.get("chat_type") if m.get("chat_type") in ("group", "private") else None
+        rule_llm = match.get("llm_id") or None
         with brain_lock:
             try:
                 ans = BRAIN.answer(question, history=_history(uid),
                                    sources=effective_sources,
                                    system_prompt=match.get("system_prompt"),
                                    system_prompt_extra=prompt_extra,
-                                   scene=scene)
+                                   model=rule_llm, scene=scene)
             except Exception as e:
                 log.exception("brain.answer 异常: %s", e)
                 _fire_error(ctx, e, "brain.answer")
@@ -1086,11 +1089,16 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
         cost_ms = int((time.time() - t0) * 1000)
         if ans.startswith("AI 服务暂时不可用"):
             images = []
-        # 每条回复都记一条「场景 + 模型」：AI 用量页能核对，app.log 也能直接搜。
-        log.info("AI 应答 | 场景=%s | 模型=%s | 纳管id=%s | 来源=%s | 耗时=%dms | 问=%s",
+        # 每条回复都记一条「哪个配置 + 哪个模型 + 为什么是它」：
+        # 来源 override=该条群/私聊配置里选的、scene=场景默认、default=全局默认。
+        src_label = {"override": "本条配置", "scene": "场景默认",
+                     "default": "全局默认"}.get(llm_used.get("source") or "", "config.yaml")
+        log.info("AI 应答 | 场景=%s | 配置=%s | 模型=%s | 纳管id=%s | 来源=%s | 耗时=%dms | 问=%s",
                  {"group": "群聊", "private": "私聊"}.get(scene or "", "不限"),
+                 match.get("policy_name") or "-",
                  llm_used.get("model") or "-", llm_used.get("id") or "-",
-                 llm_used.get("source") or "config.yaml", cost_ms, _brief(question))
+                 "%s(%s)" % (llm_used.get("source") or "config.yaml", src_label),
+                 cost_ms, _brief(question))
         store.log_llm_usage(attempts, source="wechat", llm_id=llm_used.get("id"),
                             scene=scene)
 

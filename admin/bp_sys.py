@@ -136,7 +136,10 @@ def api_api_service():
 @login_required
 def api_options():
     return ok(policies=store.list_policies(), docs=store.all_kb_docs(),
-               groups=store.list_groups())
+               groups=store.list_groups(),
+               # 群聊/私聊配置表单的「大模型」下拉：只给启用的，不带密钥
+               llms=[{"id": m["id"], "name": m["name"], "model": m["model"]}
+                     for m in store.list_llm_models() if m.get("enabled")])
 
 def _tail(path, max_bytes=120000):
     try:

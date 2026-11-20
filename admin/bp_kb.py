@@ -52,15 +52,26 @@ def api_policies_sync_docs():
 
 # ---------------------------------------------------------------- 群聊 / 私聊配置
 
+def _llm_note(d):
+    """后台操作日志里记一句「这条配置选了哪个模型」，停用/未选都要看得出来。"""
+    mid = (d or {}).get("llm_id") or 0
+    if not mid:
+        return "跟随默认"
+    row = store.get_llm_model(mid)
+    return ("%s(id=%s)" % (row["name"], mid)) if row else ("id=%s(不存在/已停用)" % mid)
+
+
 @bp.route("/api/group-rules", methods=["GET", "POST"])
 @login_required
 def api_group_rules():
     if request.method == "GET":
         items = store.list_group_rules()
         return ok(items=items, total=len(items))
+    d = body()
     try:
-        rid = store.save_group_rule(body())
-        adminlog("保存群聊配置 id=%s user=%s", rid, session.get("uid"))
+        rid = store.save_group_rule(d)
+        adminlog("保存群聊配置 id=%s 大模型=%s user=%s", rid, _llm_note(d),
+                 session.get("uid"))
         return ok(message="群聊配置已保存", id=rid, items=store.list_group_rules())
     except (ValueError, OSError) as e:
         return fail(e)
@@ -79,9 +90,11 @@ def api_private_rules():
     if request.method == "GET":
         items = store.list_private_rules()
         return ok(items=items, total=len(items))
+    d = body()
     try:
-        rid = store.save_private_rule(body())
-        adminlog("保存私聊配置 id=%s user=%s", rid, session.get("uid"))
+        rid = store.save_private_rule(d)
+        adminlog("保存私聊配置 id=%s 大模型=%s user=%s", rid, _llm_note(d),
+                 session.get("uid"))
         return ok(message="私聊配置已保存", id=rid, items=store.list_private_rules())
     except (ValueError, OSError) as e:
         return fail(e)

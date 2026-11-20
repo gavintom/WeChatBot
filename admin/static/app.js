@@ -68,7 +68,7 @@
   }
   function badge(text) { return '<span class="chip">' + esc(text) + '</span>'; }
 
-  var OPTIONS = { policies: [], docs: [], groups: [] };
+  var OPTIONS = { policies: [], docs: [], groups: [], llms: [] };
   // 每个列表记住总页数：下一页只能翻到 maxPage，避免无限翻到空页
   var recPage = 1, recLimit = 30, recMaxPage = 1;
   var llmPage = 1, llmLimit = 30, llmMaxPage = 1, chartLlm = null;
@@ -240,15 +240,11 @@
     if (name === 'groups' || name === 'private' || name === 'policies' || name === 'knowledge') {
       refreshOptions().then(function () { L[name](); });
     } else { L[name](); }
-    // 群聊 / 私聊配置页顶部的「应答模型」下拉：进页面就拉一次最新场景配置
-    var picker = { groups: ['group', 'grpSceneModel', 'grpSceneModelEff'],
-                   private: ['private', 'prvSceneModel', 'prvSceneModelEff'] }[name];
-    if (picker) loadScenePicker(picker[0], picker[1], picker[2]);
   }
   function refreshOptions() {
     return api('/api/options').then(function (d) {
       OPTIONS.policies = d.policies || []; OPTIONS.docs = d.docs || [];
-      OPTIONS.groups = d.groups || [];
+      OPTIONS.groups = d.groups || []; OPTIONS.llms = d.llms || [];
     }).catch(function () {});
   }
   function policyOptions() {
@@ -259,6 +255,21 @@
   function rulePolicyOptions() {
     // 规则表单专用：允许「不查询知识库」，关闭知识库开关时下拉就落在这个空项
     return [{ value: '', label: '（不查询知识库）' }].concat(policyOptions());
+  }
+  function ruleLlmOptions() {
+    // 每条群聊 / 私聊配置各自选一个大模型；0 = 不指定，走场景默认 → 全局默认。
+    // 只列启用的模型（停用的选了也不会生效），名字后带上上游模型 ID 便于区分。
+    return [{ value: 0, label: '不指定（跟随默认模型）' }].concat(
+      (OPTIONS.llms || []).map(function (m) {
+        return { value: m.id, label: m.name + ' · ' + m.model };
+      }));
+  }
+  // 规则列表里的「模型」单元格：不指定 / 已删除 / 已停用 都要能一眼看出来
+  function ruleLlmCell(r) {
+    if (!r.llm_id) return '<span class="muted">跟随默认</span>';
+    if (!r.llm_name) return '<span class="tag tag-warn">模型已删除</span>';
+    return esc(r.llm_name) +
+      (r.llm_available ? '' : '<span class="tag tag-warn">已停用</span>');
   }
   function groupOptions() {
     return OPTIONS.groups.map(function (g) {
@@ -993,10 +1004,9 @@
       });
     });
   }
-  /* 分场景模型（群聊 / 私聊）：value=0 表示跟随全局默认。
-     inherited=true 说明此刻用的是全局默认（没选，或原来选的模型已停用）。
-     同一份配置在「AI 大模型」页和「群聊配置 / 私聊配置」页各有一个下拉，
-     三处读写的都是同一个场景设置，改哪边都一样。 */
+  /* 分场景默认模型（可选兜底）：value=0 表示跟随全局默认。
+     注意这是**群聊/私聊整体**的兜底，不是逐条配置的选择；每条群聊/私聊配置
+     自己选的模型（规则级 llm_id）优先级更高，见 ruleLlmOptions()。 */
   function fillSceneSelect(selId, effId, sc, items) {
     var sel = $(selId), box = $(effId);
     if (!sel || !box) return;
@@ -1017,21 +1027,6 @@
   function renderLlmScenes(scenes, items) {
     fillSceneSelect('llmSceneGroup', 'llmSceneGroupEff', (scenes || {}).group, items);
     fillSceneSelect('llmScenePrivate', 'llmScenePrivateEff', (scenes || {}).private, items);
-  }
-  /* 群聊 / 私聊配置页的模型下拉：进页面时单独拉一次，避免依赖「AI 大模型」页是否打开过。 */
-  function loadScenePicker(scene, selId, effId) {
-    return api('/api/llm-models').then(function (d) {
-      fillSceneSelect(selId, effId, (d.scenes || {})[scene], d.items);
-    }).catch(function () {});
-  }
-  function saveSceneModel(scene, selId) {
-    var body = {};
-    body[scene] = $(selId).value;
-    return api('/api/llm-models/scene', { method: 'POST', body: body })
-      .then(function (d) {
-        toast(d.message);
-        fillSceneSelect(selId, selId + 'Eff', (d.scenes || {})[scene], d.items);
-      }).catch(fail);
   }
   function editLlmModel(row) {
     var editing = !!row;
@@ -1335,6 +1330,11 @@
       { key: 'policy_id', label: '知识库配置', type: 'select', compact: true,
         options: rulePolicyOptions() },
 
+      { type: 'group', label: '大模型' },
+      { key: 'llm_id', label: '本群使用的大模型', type: 'select', compact: true,
+        options: ruleLlmOptions(),
+        help: '不指定 = 跟随默认模型；选定后这个群的所有回复都用它，下一条消息即生效' },
+
       { type: 'group', label: '转人工' },
       { key: 'need_transfer', label: '', type: 'checkbox', checkLabel: '允许转人工',
         help: '不勾选则忽略「转人工」关键词与 AI 的转人工标记，直接回复客户' },
@@ -1361,6 +1361,7 @@
     values.system_prompt = (v && v.system_prompt) || '';
     values.human_wxid = (v && v.human_wxid) || '';
     values.human_name = (v && v.human_name) || '';
+    values.llm_id = (v && v.llm_id) || 0;   // 0 = 不指定，跟随默认模型
     openForm(v ? '编辑群聊配置' : '新建群聊配置', fields, values, function (data) {
       if (v) data.id = v.id;
       return api('/api/group-rules', { method: 'POST', body: data }).then(function (d) {
@@ -1386,6 +1387,7 @@
       return '<tr><td><strong>' + esc(r.group_name || '（未命名群）') + '</strong></td>' +
         '<td><code>' + esc(r.group_id) + '</code></td><td>' + esc(listStr(r.wake_words) || '（仅 @ 触发）') + '</td>' +
         '<td>' + esc(r.policy_name || '—') + '</td><td>' + esc((r.docs || []).length) + '</td>' +
+        '<td>' + ruleLlmCell(r) + '</td>' +
         '<td>' + promptBrief(r.system_prompt) + '</td>' +
         '<td>' + (r.human_wxid ? esc((r.human_name || '人工客服') + ' · ' + r.human_wxid)
                   : '<span class="muted">默认</span>') + '</td>' +
@@ -1395,7 +1397,7 @@
           ' · 引用触发 ' + (r.quote_self_trigger !== false ? '开' : '关') + '</span></td>' +
         '<td><button class="btn btn-ghost btn-sm" data-gedit="' + r.id + '">编辑</button> ' +
         '<button class="btn btn-warn btn-sm" data-gdel="' + r.id + '">删除</button></td></tr>';
-    }).join('') : emptyRow(9, '还没有群聊配置；点右上角「新建配置」，只有表内的群才会被响应');
+    }).join('') : emptyRow(10, '还没有群聊配置；点右上角「新建配置」，只有表内的群才会被响应');
     $$('[data-gedit]').forEach(function (b) {
       b.addEventListener('click', function () {
         editGroup(grpRows.filter(function (x) { return x.id == b.dataset.gedit; })[0]);
@@ -1441,6 +1443,11 @@
       { key: 'policy_id', label: '知识库配置', type: 'select', compact: true,
         options: rulePolicyOptions() },
 
+      { type: 'group', label: '大模型' },
+      { key: 'llm_id', label: '本配置使用的大模型', type: 'select', compact: true,
+        options: ruleLlmOptions(),
+        help: '不指定 = 跟随默认模型；选定后命中这条配置的私聊都用它，下一条消息即生效' },
+
       { type: 'group', label: '转人工' },
       { key: 'need_transfer', label: '', type: 'checkbox', checkLabel: '允许转人工',
         help: '不勾选则忽略「转人工」关键词与 AI 的转人工标记，直接回复客户' },
@@ -1463,6 +1470,7 @@
     values.system_prompt = (v && v.system_prompt) || '';
     values.human_wxid = (v && v.human_wxid) || '';
     values.human_name = (v && v.human_name) || '';
+    values.llm_id = (v && v.llm_id) || 0;   // 0 = 不指定，跟随默认模型
     openForm(v ? '编辑私聊配置' : '新建私聊配置', fields, values, function (data) {
       if (v) data.id = v.id;
       return api('/api/private-rules', { method: 'POST', body: data }).then(function (d) {
@@ -1478,13 +1486,14 @@
         '<td>' + esc(listStr(r.allow_list) || '所有人') + '</td>' +
         '<td>' + esc(listStr(r.deny_list) || '—') + '</td>' +
         '<td>' + esc(r.policy_name || '—') + '</td><td>' + esc(r.priority) + '</td>' +
+        '<td>' + ruleLlmCell(r) + '</td>' +
         '<td>' + promptBrief(r.system_prompt) + '</td>' +
         '<td>' + tag(r.enabled, '启用', '停用') +
           '<span class="muted small">知识库 ' + (r.need_kb !== false ? '开' : '关') +
           ' · 转人工 ' + (r.need_transfer !== false ? '开' : '关') + '</span></td>' +
         '<td><button class="btn btn-ghost btn-sm" data-pedit="' + r.id + '">编辑</button> ' +
         '<button class="btn btn-warn btn-sm" data-pdel="' + r.id + '">删除</button></td></tr>';
-    }).join('') : emptyRow(9, '还没有私聊配置');
+    }).join('') : emptyRow(10, '还没有私聊配置');
     $$('[data-pedit]').forEach(function (b) {
       b.addEventListener('click', function () {
         editPrivate(prvRows.filter(function (x) { return x.id == b.dataset.pedit; })[0]);
@@ -3973,18 +3982,11 @@
     fr.readAsText(f);
     this.value = '';
   });
-  // 分场景模型：群聊 / 私聊一次保存（0 = 跟随全局默认）
+  // 分场景默认模型（可选兜底）：群聊 / 私聊一次保存（0 = 跟随全局默认）
   $('btnLlmSceneSave').addEventListener('click', function () {
     api('/api/llm-models/scene', { method: 'POST', body: {
       group: $('llmSceneGroup').value, private: $('llmScenePrivate').value
     } }).then(function (d) { toast(d.message); renderLlmModels(d); }).catch(fail);
-  });
-  // 群聊 / 私聊配置页各自的「应答模型」保存
-  $('btnGrpModelSave').addEventListener('click', function () {
-    saveSceneModel('group', 'grpSceneModel');
-  });
-  $('btnPrvModelSave').addEventListener('click', function () {
-    saveSceneModel('private', 'prvSceneModel');
   });
 
   // 配置

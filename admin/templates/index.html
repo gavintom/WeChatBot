@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1f18">
 <title>微信智能客服 · 管理后台 {{ app_version }}</title>
-<link rel="stylesheet" href="/static/app.css?v=20261119">
+<link rel="stylesheet" href="/static/app.css?v=20261120beta1">
 </head>
 <body>
 <!-- 移动端抽屉遮罩：桌面由 CSS 隐藏；点它 / 按 Esc / 切换页面都会收起侧栏 -->
@@ -406,8 +406,11 @@
           <button class="btn btn-ghost btn-sm" id="btnCtSync">从手机同步</button></div></div>
           <div class="alert alert-info" style="margin:0 0 12px">
             好友列表带「本人」标记，<b>本人不能改备注</b>（微信没有这个通道）。
-            企业微信联系人（<code>uiClass=myEnterpriseMember</code>）也归在好友里，标<span class="tag tag-ent">企业</span>，
-            wxid 形如 <code>xxx@openim</code>。群聊点「查看群友」后，
+            企业微信的两类联系人也归在好友里：<b>企业成员</b>（<code>uiClass=myEnterpriseMember</code>，
+            <b>我所在企业</b>的企微号，wxid 形如 <code>xxx@openim</code>）标<span class="tag tag-ent">企业</span>；
+            <b>企微联系人</b>（<code>uiClass=enterpriseContact</code>，通过企业微信加的联系人，
+            <b>不是本企业成员</b>）标<span class="tag tag-wxwork">企微联系人</span>。
+            群聊点「查看群友」后，
             本人一行只能改<b>自己的群昵称</b>（群内可见）；其他成员可「改备注」，走的是全局好友备注，
             <b>该群友在所有群中本机看到的显示名都将是该备注</b>，<b>不需要群主 / 管理员权限</b>。
             写入的是手机微信里的真实数据，需要手机插件 <b>v1.2.10-beta67</b> 及以上。
@@ -796,6 +799,6 @@
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/marked.min.js"></script>
 <script src="/static/vendor/purify.min.js"></script>
-<script src="/static/app.js?v=20261119"></script>
+<script src="/static/app.js?v=20261120beta1"></script>
 </body>
 </html>

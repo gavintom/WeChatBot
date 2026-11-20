@@ -4,6 +4,8 @@
   GET /api/contacts/refresh        同步前重建全量通讯录（60 秒限流，数据仍有效）
   GET /api/contacts/groups         所有群聊（uiClass=group，含 memberCount）
   GET /api/contacts/friends        好友明细（含自己；不带 scope 参数）
+                                   uiClass 过滤：myEnterpriseMember（企业成员）、
+                                   enterpriseContact（企微联系人）都要另拉一次
   GET /api/contacts/find?wxid=     全量库反查，统一 matches[] 结构
   GET /api/chats                   所有会话（**无参数**；补全只在会话列表里的私聊好友）
   GET /api/contacts/groupmember?chat= 群成员（displayName / groupNick / avatar）
@@ -39,6 +41,57 @@ _client = None
 _client_lock = threading.Lock()
 _sync_lock = threading.Lock()
 
+# 好友池的额外分类（插件 6.4 的 uiClass 过滤参数）。
+# 不传 uiClass 只返回「微信好友」；企业成员、企微联系人都不在这个默认分类里，
+# 必须各自单独拉一次再合并，否则通讯录里明明是这些人，后台好友列表里就是缺。
+#
+# 两类别混：
+#   myEnterpriseMember  企业成员 —— **我所在企业**（本机登录的企微主体）的成员，
+#                       微信「企业微信」里能看到、wxid 形如 xxx@openim；
+#   enterpriseContact   企微联系人 —— 通过企业微信加的联系人（企业微信通讯录里
+#                       本企业成员之外的那些），不是本企业成员。
+# v1.1.2-beta1 起把 enterpriseContact 一并纳入（此前只拉了企业成员）。
+EXTRA_FRIEND_CLASSES = (
+    ("myEnterpriseMember", "企业成员"),
+    ("enterpriseContact", "企微联系人"),
+)
+
+
+def _fetch_friends(wx):
+    """拉好友池：默认微信好友 + 各额外 uiClass 分类，按 wxid 去重合并。
+
+    返回 (friends, stats)，stats 形如 {"myEnterpriseMember": 2, "enterpriseContact": 3}
+    记录每个分类**新增**的条数，供同步提示语展示。
+    某个分类拉取失败只当这一类没有（插件版本低 / 手机离线时不能拖垮整次同步）。
+    """
+    friends = wx.friends().get("friends") or []
+    # 插件 v2 的联系人条目是统一结构（uiClass / isFriend / avatar…），没有旧版的
+    # type / source；统一补默认值，保证三类条目的口径一致。
+    for f in friends:
+        f.setdefault("type", "private")
+        f.setdefault("source", "contacts")
+    seen = {str(f.get("wxid") or "").strip() for f in friends}
+    stats = {}
+    for ui_class, label in EXTRA_FRIEND_CLASSES:
+        try:
+            rows = wx.friends(ui_class=ui_class).get("friends") or []
+        except Exception:
+            rows = []
+        added = 0
+        for f in rows:
+            wxid = str(f.get("wxid") or "").strip()
+            if not wxid or wxid in seen:
+                continue
+            # 插件已给 uiClass 就沿用，缺了按本次请求的分类补，前端靠它打标
+            f["uiClass"] = f.get("uiClass") or ui_class
+            f.setdefault("type", "private")
+            f.setdefault("source", "contacts")
+            friends.append(f)
+            seen.add(wxid)
+            added += 1
+        stats[ui_class] = added
+    return friends, stats
+
 
 def client():
     global _client
@@ -65,23 +118,9 @@ def sync_all():
         except Exception:
             refreshed = {}          # 后续读接口会自己报错，这里不额外干扰
         groups = wx.groups()
-        friends = wx.friends().get("friends") or []
-        # 企业成员（uiClass=myEnterpriseMember）不在默认的 friend 分类里，必须
-        # 单独按分类再拉一次合并进好友列表，否则通讯录里加了企业微信同事也看不到。
-        # 失败不影响主流程：拉不到就是没有这一类，不阻断其它数据落库。
-        try:
-            ent = wx.friends(ui_class="myEnterpriseMember").get("friends") or []
-        except Exception:
-            ent = []
-        if ent:
-            seen_ent = {str(f.get("wxid") or "") for f in friends}
-            for f in ent:
-                wxid = str(f.get("wxid") or "").strip()
-                if not wxid or wxid in seen_ent:
-                    continue
-                f["uiClass"] = f.get("uiClass") or "myEnterpriseMember"
-                friends.append(f)
-                seen_ent.add(wxid)
+        # 好友池：默认微信好友 + 企业成员 + 企微联系人（见 _fetch_friends）。
+        # 「企业号」这类联系人不在默认的 friend 分类里，不单独拉就永远进不了后台。
+        friends, extra_stats = _fetch_friends(wx)
         # v2 的联系人条目是统一结构（uiClass / isFriend / avatar…），没有旧版的
         # type / source；补上默认值，让本地缓存与「会话补全」追加的条目口径一致。
         # isSelf：插件 friends[] 自带；旧版插件没带时用 /api/health 的 self 兜底，
@@ -122,6 +161,9 @@ def sync_all():
         replaced = store.replace_contacts_catalog(groups, friends)
         return {"groups": len(groups), "friends": len(friends),
                 "throttled": bool(refreshed.get("throttled")),
+                # 各额外分类新增条数（企业成员 / 企微联系人），供提示语拆分显示
+                "extra": extra_stats,
+                "extra_total": sum(extra_stats.values()),
                 "groups_replaced": replaced["groups_replaced"],
                 "contacts_replaced": replaced["contacts_replaced"],
                 "group_list": store.list_groups(), "friend_list": store.list_friends()}

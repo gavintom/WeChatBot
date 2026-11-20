@@ -69,10 +69,19 @@ def api_set_alert():
 def api_contacts_sync():
     try:
         r = contacts.sync_all()
-        adminlog("同步通讯录 群=%s 好友=%s 替换群=%s 替换好友=%s user=%s",
-                 r["groups"], r["friends"], r.get("groups_replaced"),
+        extra = r.get("extra") or {}
+        adminlog("同步通讯录 群=%s 好友=%s 企业成员=%s 企微联系人=%s 替换群=%s 替换好友=%s user=%s",
+                 r["groups"], r["friends"], extra.get("myEnterpriseMember"),
+                 extra.get("enterpriseContact"), r.get("groups_replaced"),
                  r.get("contacts_replaced"), session.get("uid"))
         parts = ["同步完成：%d 个群、%d 位好友" % (r["groups"], r["friends"])]
+        # 额外分类（企业成员 / 企微联系人）单独说清楚，方便判断「通讯录里有的人
+        # 后台没出现」到底是没拉到，还是真的不在通讯录里。
+        breakdown = "、".join("%s %d 位" % (label, extra[cls])
+                              for cls, label in contacts.EXTRA_FRIEND_CLASSES
+                              if extra.get(cls))
+        if breakdown:
+            parts.append("其中 %s" % breakdown)
         if not r.get("groups_replaced", True):
             parts.append("手机未返回群列表，已保留原有群聊缓存")
         if not r.get("contacts_replaced", True):

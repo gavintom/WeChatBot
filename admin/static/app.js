@@ -1615,6 +1615,20 @@
       });
     }).catch(fail);
   }
+  /* 好友来源标签：由插件 uiClass 决定，别跟个人好友混在一起分不清。
+     myEnterpriseMember  企业成员 —— 我所在企业的企微号（wxid 形如 xxx@openim）
+     enterpriseContact   企微联系人 —— 通过企业微信加的联系人，不是本企业成员
+     这两类都不在插件默认的 friend 分类里，同步时按 uiClass 各拉一次后合并。 */
+  function ctClassTag(cls) {
+    if (cls === 'myEnterpriseMember') return '<span class="tag tag-ent">企业</span>';
+    if (cls === 'enterpriseContact') return '<span class="tag tag-wxwork">企微联系人</span>';
+    return '';
+  }
+  function ctClassLabel(cls) {
+    if (cls === 'myEnterpriseMember') return '企业成员（我所在企业的企微号）';
+    if (cls === 'enterpriseContact') return '企微联系人（不是本企业成员）';
+    return '微信好友';
+  }
   function loadCtFriends() {
     api('/api/contacts/friends').then(function (d) {
       $('ctFriendBody').innerHTML = d.items.length ? d.items.map(function (c) {
@@ -1622,12 +1636,9 @@
         // 所以本人的行只留「查看详情」，不给改备注按钮。
         var remarkBtn = c.is_self ? ''
           : '<button class="btn btn-ghost btn-sm" data-ctfrremark="' + esc(c.wxid) + '">改备注</button>';
-        // 企业成员（插件 uiClass=myEnterpriseMember）和普通好友同列，打「企业」标记，
-        // 免得跟个人好友混在一起分不清来源；wxid 形如 xxx@openim。
-        var entTag = c.ui_class === 'myEnterpriseMember'
-          ? '<span class="tag tag-ent">企业</span>' : '';
+        var classTag = ctClassTag(c.ui_class);
         return '<tr><td>' + avatarHtml(c.name || c.wxid, c.avatar) + '</td>' +
-          '<td><strong>' + esc(c.name || c.wxid) + '</strong>' + entTag + '</td>' +
+          '<td><strong>' + esc(c.name || c.wxid) + '</strong>' + classTag + '</td>' +
           '<td>' + (c.is_self ? '<span class="tag tag-self">本人</span>' : '') + '</td>' +
           '<td><code>' + esc(c.wxid) + '</code></td><td>' + esc(c.nick_name || '—') + '</td>' +
           '<td>' + esc(c.remark || '—') + '</td><td>' + esc(c.source || '—') + '</td>' +
@@ -1805,17 +1816,16 @@
     api('/api/contacts/friends/detail?wxid=' + encodeURIComponent(wxid)).then(function (d) {
       var l = d.local || {};
       var isSelf = !!l.is_self;
-      var isEnt = l.ui_class === 'myEnterpriseMember';
       var html = '<div class="ct-detail-head">' +
         avatarHtml(l.name || wxid, l.avatar, 'lg') +
         '<div><strong>' + esc(l.name || wxid) + '</strong>' +
         (isSelf ? ' <span class="tag tag-self">本人</span>' : '') +
-        (isEnt ? ' <span class="tag tag-ent">企业</span>' : '') +
+        ctClassTag(l.ui_class) +
         '<div class="muted small">' + esc(l.wxid || wxid) + '</div></div></div>' +
         '<div class="kv-list">' + kv([
         ['wxid', l.wxid || wxid], ['显示名', l.name || '—'],
         ['微信昵称', l.nick_name || '—'], ['备注', l.remark || '—'],
-        ['类型', isEnt ? '企业成员（企业微信）' : '微信好友'],
+        ['类型', ctClassLabel(l.ui_class)],
         ['本人', isSelf ? '是（当前登录账号）' : '否'],
         ['来源', l.source || '—'], ['同步时间', l.synced_str || '—'],
         ['最近提问时间', l.last_seen || '—'], ['最近提问', l.last_question || '—']

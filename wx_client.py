@@ -170,9 +170,10 @@ class WXClient:
         好友池含自己，本机实测只有个位数条目是正常的（全量里的 stranger 不是好友）。
 
         uiClass 指定分类（6.4 的过滤参数）：不传=微信好友，另外还有
-        `myEnterpriseMember`（企业成员）/ `enterpriseContact`（企微外部联系人）/
-        `officialAccount` / `all` 等。注意「企业成员」不在默认的 friend 类里，
-        要单独拉一次才能出现在好友列表。
+        `myEnterpriseMember`（企业成员，**我所在企业**的企微号）/
+        `enterpriseContact`（企微联系人，通过企业微信加的联系人，不是本企业成员）/
+        `officialAccount` / `all` 等。注意这两类企业相关联系人都不在默认的
+        friend 类里，要各自单独拉一次才能出现在好友列表。
         """
         p = {}
         if wxid:

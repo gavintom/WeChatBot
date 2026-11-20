@@ -1465,8 +1465,9 @@ def list_friends():
     for r in rows:
         r["synced_str"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["synced_at"] or 0))
         r["is_self"] = bool(r.get("is_self"))
-        # 企业成员（uiClass=myEnterpriseMember）与普通好友同表，靠 ui_class 区分；
-        # 老库刚迁移时该列可能为空，回落到 detail JSON 里的 uiClass。
+        # 企业类联系人（uiClass=myEnterpriseMember 企业成员 / enterpriseContact
+        # 企微联系人）与普通好友同表，靠 ui_class 区分；老库刚迁移时该列可能
+        # 为空，回落到 detail JSON 里的 uiClass。
         if not r.get("ui_class"):
             try:
                 r["ui_class"] = (json.loads(r.get("detail") or "{}").get("uiClass") or "")

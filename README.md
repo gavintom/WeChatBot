@@ -5,10 +5,19 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.1**（正式版，镜像 tag `1.1.1`，从源码构建；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2-beta1**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
+
+> **V1.1.2-beta1 更新要点**：通讯录「好友」补齐**企微联系人**
+> （插件 `/api/contacts/friends?uiClass=enterpriseContact`）。这里说的是**通过企业微信加的联系人**，
+> 不是本企业成员——**企业成员**（`myEnterpriseMember`）才是**我所在企业**的企微号，V1.1.1-beta7 已纳入。
+> 本次把 `enterpriseContact` 也并进来：同步时三类合并、按 wxid 去重；好友列表标「企微联系人」，
+> 详情页类型显示「企微联系人（不是本企业成员）」，与企业成员的「企业」标区分开。
+> 某个分类拉不到（旧插件 / 手机离线）只当这一类为空，不阻断整次同步；
+> 同步提示语会拆分显示「其中企业成员 X 位、企微联系人 Y 位」。
+> beta 版本尚未推送到 Docker Hub，请用源码构建后部署。
 
 > **V1.1.1 更新要点**：从 1.1.0 到 1.1.1 的正式版，功能面 + 内部质量两条线。
 
@@ -20,7 +29,8 @@
 > **③ 通讯录写操作**：改好友备注、改我的群昵称、改群友备注，三个操作都写进手机真实数据，
 > 以插件回读 `confirmed` 为准（需插件 **v1.2.10-beta67+**）；备注为全局生效，界面明确提示；
 > 写完强制插件重建通讯录快照，其它群 / 好友页不再显示旧值。
-> **④ 通讯录字段**：好友列表标出「本人」与企业微信联系人（`uiClass=myEnterpriseMember`），
+> **④ 通讯录字段**：好友列表标出「本人」与企业微信联系人（`uiClass=myEnterpriseMember`
+> 标「企业」、`enterpriseContact`（企微联系人）标「企微联系人」，后者自 V1.1.2-beta1 起同步），
 > 群成员表新增「管理员」列。
 > **⑤ 交互**：写操作按钮保存后立刻置灰（防连点重复写入），确认框改站内居中弹窗，
 > 结果提示顶部居中并延长停留（6s / 警告错误 8s）。

@@ -5,10 +5,17 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.2-beta5**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2-beta6**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
+
+> **V1.1.2-beta6 更新要点**：修复「对话记录」页**时间列挤住会话名**。
+> 时间列原本只占 8% 且在固定布局下 `nowrap`，`2026-11-20 22:03:15` 实际约 118px
+> 却只有 ~104px 可用宽度，文字溢出直接压到会话列上。现改为固定 112px + 右侧 18px 留白，
+> 并把时间拆成「日期 / 时刻」两行（时刻用浅色），窄列不再溢出；会话列同步加宽到 8%。
+> 另外把上线前的 `backup/` 目录加入 `.dockerignore` / `.gitignore`——那里的 `config.yaml`
+> 副本含密钥，之前会被 `COPY . /app` 一起打进镜像。
 
 > **V1.1.2-beta5 更新要点**：**每条群聊 / 私聊配置各自选一个大模型**（规则级）。
 > 「群聊配置」「私聊配置」的新建 / 编辑弹窗里新增「大模型」下拉（`llm_id`）：

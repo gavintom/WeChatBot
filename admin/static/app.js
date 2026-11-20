@@ -796,6 +796,16 @@
     });
     return p;
   }
+  /* 时间单元格：拆成「日期 / 时刻」两行，避免窄列溢出压到会话名 */
+  function timeCell(s) {
+    var t = String(s == null ? '' : s).trim();
+    var i = t.indexOf(' ');
+    if (i > 0) {
+      return '<td class="cell-time"><span class="t-date">' + esc(t.slice(0, i)) +
+        '</span><span class="t-clock">' + esc(t.slice(i + 1)) + '</span></td>';
+    }
+    return '<td class="cell-time">' + esc(t) + '</td>';
+  }
   function loadRecords() {
     api('/api/records?' + recParams()).then(function (d) {
       $('recTotal').textContent = d.total;
@@ -803,7 +813,7 @@
       recPage = pg.page; recMaxPage = pg.maxPage;
       $('recBody').innerHTML = d.items.length ? d.items.map(function (r) {
         var kindText = { reply: 'AI 回复', skip: '跳过', unsupported: '暂不支持', transfer: '转人工', error: '错误' }[r.kind] || r.kind;
-        return '<tr><td class="cell-time">' + esc(r.time_str) + '</td>' +
+        return '<tr>' + timeCell(r.time_str) +
           '<td>' + esc(r.chat_name || r.chat) + '<div class="muted">' + esc(r.chat_type) + '</div></td>' +
           '<td class="cell-user">' + esc(r.sender_name || r.sender) + '</td>' +
           '<td>' + esc(r.msg_type) + '</td><td>' + tag(r.kind === 'reply', kindText, kindText) + '</td>' +

@@ -310,6 +310,9 @@ input:focus, select:focus, textarea:focus {
 .table .cell-q { color: var(--text); }
 .table .cell-a { color: var(--text-2); }
 .cell-time { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 12.5px; }
+/* 对话记录的时间拆两行：日期 / 时刻，窄列也放得下，不会挤到会话列 */
+.cell-time .t-date, .cell-time .t-clock { display: block; line-height: 1.45; }
+.cell-time .t-clock { color: var(--text-3); font-size: 12px; }
 .cell-user { font-weight: 500; }
 /* 表格行内多个操作按钮（改备注 / 查看详情）：不要挤成一条，也不要换行 */
 .table td .btn-sm { white-space: nowrap; }
@@ -754,15 +757,17 @@ input:focus, select:focus, textarea:focus {
 /* 对话管理明细：列给足最小宽度避免挤成一团，超出容器靠 .table-wrap 出水平滚动条；
    提问列加宽，回复/原因列保持较宽，长文本自动换行 */
 .tbl-records { table-layout: fixed; min-width: 1600px; }
-.tbl-records th:nth-child(1), .tbl-records td:nth-child(1) { width: 8%; }
-.tbl-records th:nth-child(2), .tbl-records td:nth-child(2) { width: 7%; }
+/* 时间列改固定宽 + 右侧留白：原 8% 装不下「2026-11-20 22:03:15」，
+   固定布局下会溢出压到会话列，视觉上就是两列贴在一起 */
+.tbl-records th:nth-child(1), .tbl-records td:nth-child(1) { width: 112px; padding-right: 18px; }
+.tbl-records th:nth-child(2), .tbl-records td:nth-child(2) { width: 8%; }
 .tbl-records th:nth-child(3), .tbl-records td:nth-child(3) { width: 7%; }
 .tbl-records th:nth-child(4), .tbl-records td:nth-child(4) { width: 6%; }
 .tbl-records th:nth-child(5), .tbl-records td:nth-child(5) { width: 7%; }
 .tbl-records th:nth-child(6), .tbl-records td:nth-child(6) { width: 9%; }
 .tbl-records th:nth-child(7), .tbl-records td:nth-child(7) { width: 7%; }
-.tbl-records th:nth-child(8), .tbl-records td:nth-child(8) { width: 16%; }
-.tbl-records th:nth-child(9), .tbl-records td:nth-child(9) { width: 25%; }
+.tbl-records th:nth-child(8), .tbl-records td:nth-child(8) { width: 17%; }
+.tbl-records th:nth-child(9), .tbl-records td:nth-child(9) { width: 24%; }
 .tbl-records th:nth-child(10), .tbl-records td:nth-child(10) { width: 5%; }
 .tbl-records th:nth-child(11), .tbl-records td:nth-child(11) { width: 3%; }
 .tbl-records .cell-q, .tbl-records .cell-a { white-space: normal; word-break: break-all; overflow-wrap: anywhere; }

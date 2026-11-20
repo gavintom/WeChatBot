@@ -11,6 +11,8 @@ __pycache__/
 
 # 含真实密钥的本机配置：镜像里只保留 data/config.yaml.example 模板
 config.yaml
+# 上线前的本地备份（可能含 config.yaml 密钥与业务数据库），绝不进镜像
+backup/
 # 管理端 Flask 会话签名密钥：随镜像分发等于把会话签名能力一起交出去。
 # 排除后容器首次启动会自己生成一份随机密钥（只影响已有会话需重新登录）。
 .admin_secret

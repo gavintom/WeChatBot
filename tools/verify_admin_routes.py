@@ -16,7 +16,9 @@ if BASE_DIR not in sys.path:
 import admin.app as admin_app
 
 # 拆分前 app.py 的 89 条路由是基线；调接口时同步改这个数字
-EXPECTED_ROUTES = 89
+# 90 = 1.1.2-beta2 新增 POST /api/llm-models/scene（分场景选模型）
+# 92 = 1.1.2-beta3 新增 GET /api/llm-models/export、POST /api/llm-models/import
+EXPECTED_ROUTES = 92
 
 # 必须存在的关键路径（按业务域各取一条，蓝图漏注册会立刻暴露）
 MUST_HAVE = [
@@ -25,7 +27,8 @@ MUST_HAVE = [
     "/api/contacts/sync", "/api/contacts/friends", "/api/contacts/search",
     "/api/media/recent", "/api/policies", "/api/kb/files", "/api/kb/ask",
     "/api/records", "/api/chat-messages", "/api/stats", "/api/apicalls",
-    "/api/llm-usage", "/api/llm-models", "/api/moments/feed",
+    "/api/llm-usage", "/api/llm-models", "/api/llm-models/scene",
+    "/api/llm-models/export", "/api/llm-models/import", "/api/moments/feed",
     "/api/config", "/api/followup", "/api/health", "/api/options",
 ]
 

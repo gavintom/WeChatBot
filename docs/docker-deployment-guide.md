@@ -67,7 +67,7 @@
 | 依赖 | 必需？ | 说明 |
 |---|---|---|
 | iOS 微信 + **WeChatBotTweak v1.2.7** | 必需 | 消息桥接插件，本项目只按它的 HTTP 协议对接，不修改插件 |
-| OpenAI 兼容大模型端点 + API Key | 必需 | 可在后台「AI 大模型」页纳管多个并切换默认 |
+| OpenAI 兼容大模型端点 + API Key | 必需 | 可在后台「AI 大模型」页纳管多个并切换默认；群聊 / 私聊可各选一个模型 |
 | ASR 语音识别端点 | 可选 | 不用语音就在 `config.yaml` 里设 `voice.enabled: false` |
 | nginx / 域名 / 证书 | 可选 | 见 §9 反向代理 |
 
@@ -229,7 +229,7 @@ docker logs -f wxbot
 | `wechat.base_url` | `http://192.0.2.71:18888` | 手机插件 HTTP 地址 |
 | `wechat.self_wxid` | `/api/health` 返回的 `self` | 建议填，换微信号必须改；群聊「@ 本机」判定更稳 |
 | `wechat.token` | 插件 `config.plist` 的 token | 插件没设就留空 |
-| `brain.external_llm.api_key / base_url / model` | `sk-xxx` / `https://api.deepseek.com/v1` / `deepseek-chat` | 也可在「AI 大模型」页纳管并选默认 |
+| `brain.external_llm.api_key / base_url / model` | `sk-xxx` / `https://api.deepseek.com/v1` / `deepseek-chat` | 也可在「AI 大模型」页纳管并选默认；群聊 / 私聊可各配一个（分场景模型） |
 | `server.public_base_url` | `http://192.0.2.145:29999` | **手机能访问到的地址**，一键写 webhook 会用它拼接 |
 | `webhook.token` | 自定义随机串 | 建议开启，推送地址带 `?token=` |
 | `transfer.default_wxid / default_name` | `wxid_zhangsan` / `人工客服` | wxid 不填，群聊转人工不会 @ 人 |
@@ -241,6 +241,18 @@ docker logs -f wxbot
 > - 后台「群聊配置 / 私聊配置 / 知识库 / AI 大模型 / 插件」等改的是 SQLite，**保存即生效，无需重启**；
 > - 「系统配置」里的 `config.yaml` 是模块级读取，**改完要重启容器**（`docker restart wxbot`）；
 > - 例外：「群聊对话延续窗口」保存会文本级写回 `config.yaml` 并检查 mtime，**立即生效，无需重启**。
+>
+> **分场景模型（V1.1.2-beta2）**：群聊 / 私聊各选一个模型，优先级为
+> 「本次显式指定 > 场景模型 > 全局默认 > config.yaml」。每条应答都会在
+> `data/logs/app-*.log` 打一条 `AI 应答 | 场景=… | 模型=… | 纳管id=… | 来源=…`，
+> 同时写进 `llm_usage.scene`，「AI 用量 → 来源 / 场景」列可核对配置是否真的生效。
+>
+> **导出 / 导入模型配置（V1.1.2-beta3）**：「AI 大模型」页右上角可把整套配置导成 JSON
+> （含默认模型与群聊/私聊场景选择，引用按**模型名称**对齐，跨实例导入会自动映射到本机 id）。
+> 导入分「合并（同名覆盖，不删文件外的模型）」和「全量替换（文件外的模型会被删除）」两种；
+> 导入前整体校验，任一条不合法则整批拒绝、库内不变。
+> 导出**默认含明文 API Key**，文件请当密钥保管；`GET /api/llm-models/export?secrets=0`
+> 可导出脱敏版（导入时沿用目标机已有的密钥）。
 
 ```bash
 docker restart wxbot

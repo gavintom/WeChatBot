@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1f18">
 <title>微信智能客服 · 管理后台 {{ app_version }}</title>
-<link rel="stylesheet" href="/static/app.css?v=20261120beta1">
+<link rel="stylesheet" href="/static/app.css?v=20261120beta3">
 </head>
 <body>
 <!-- 移动端抽屉遮罩：桌面由 CSS 隐藏；点它 / 按 Esc / 切换页面都会收起侧栏 -->
@@ -328,7 +328,7 @@
               <button class="btn btn-ghost btn-sm" id="btnLlmExport">导出 CSV</button>
             </div>
           </div>
-          <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模型</th><th>来源</th><th>输入</th><th>输出</th><th>总 token</th><th>费用(元)</th><th>耗时</th><th>方式</th><th>结果</th></tr></thead><tbody id="llmBody"></tbody></table></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th>时间</th><th>模型</th><th>来源 / 场景</th><th>输入</th><th>输出</th><th>总 token</th><th>费用(元)</th><th>耗时</th><th>方式</th><th>结果</th></tr></thead><tbody id="llmBody"></tbody></table></div>
           <div class="pager"><button class="btn btn-ghost btn-sm" id="llmPrev">上一页</button><span id="llmPgInfo">第 1 页</span><button class="btn btn-ghost btn-sm" id="llmNext">下一页</button></div>
         </div>
       </section>
@@ -374,7 +374,15 @@
 
       <!-- ================= 群聊配置 ================= -->
       <section class="view hidden" id="view-groups">
-        <div class="card"><div class="card-head"><h3>群聊配置 <span class="count-pill" id="grpTotal">0</span></h3>
+        <div class="card"><div class="card-head"><h3>群聊应答模型</h3>
+          <div class="row-gap"><button class="btn btn-primary btn-sm" id="btnGrpModelSave">保存</button></div></div>
+          <div class="alert alert-info">群聊消息用这个模型应答。选「跟随全局默认」则用「AI 大模型」页的默认模型；保存后下一条消息即生效，无需重启。每轮应答都会把实际使用的模型写进运行日志与「AI 用量」的「来源 / 场景」列。</div>
+          <div class="row-gap" style="flex-wrap:wrap">
+            <select id="grpSceneModel" style="min-width:260px"></select>
+            <span class="muted small" id="grpSceneModelEff">当前生效：—</span>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><h3>群聊配置 <span class="count-pill" id="grpTotal">0</span></h3>
           <div class="row-gap"><button class="btn btn-ghost btn-sm" id="btnGrpSync">同步群列表</button><button class="btn btn-primary btn-sm" id="btnGrpNew">新建配置</button></div></div>
           <div class="alert alert-info">只有列在表内的群才会被处理；群内消息需 <b>@ 本机微信号</b> 或命中该群唤醒词才触发智能应答；只检索该配置绑定的知识库配置包含的文档。每条配置还能单独关闭 <b>知识库</b>（跳过检索）或 <b>转人工</b>（忽略关键词与 AI 标记，直接回复）。</div>
           <div class="table-wrap"><table class="table" id="grpTable"><thead><tr><th data-sort="group_name">群聊</th><th data-sort="group_id">群 ID</th><th data-sort="wake_words">唤醒词</th><th data-sort="policy_name">知识库配置</th><th data-sort="docs">文档数</th><th data-sort="system_prompt">提示词</th><th data-sort="human_wxid">人工接待</th><th data-sort="enabled">状态</th><th>操作</th></tr></thead><tbody id="grpBody"></tbody></table></div></div>
@@ -382,7 +390,15 @@
 
       <!-- ================= 私聊配置 ================= -->
       <section class="view hidden" id="view-private">
-        <div class="card"><div class="card-head"><h3>全局黑名单</h3><div class="row-gap"><button class="btn btn-primary btn-sm" id="btnDenySave">保存</button></div></div>
+        <div class="card"><div class="card-head"><h3>私聊应答模型</h3>
+          <div class="row-gap"><button class="btn btn-primary btn-sm" id="btnPrvModelSave">保存</button></div></div>
+          <div class="alert alert-info">私聊消息用这个模型应答。选「跟随全局默认」则用「AI 大模型」页的默认模型；保存后下一条消息即生效，无需重启。每轮应答都会把实际使用的模型写进运行日志与「AI 用量」的「来源 / 场景」列。</div>
+          <div class="row-gap" style="flex-wrap:wrap">
+            <select id="prvSceneModel" style="min-width:260px"></select>
+            <span class="muted small" id="prvSceneModelEff">当前生效：—</span>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><h3>全局黑名单</h3><div class="row-gap"><button class="btn btn-primary btn-sm" id="btnDenySave">保存</button></div></div>
           <div class="field" style="margin-bottom:8px"><label>wxid 或昵称（逗号 / 换行分隔；命中一律不回复，优先级最高）</label><textarea id="globalDeny" rows="2" placeholder="wxid_xxx, 某昵称"></textarea></div>
         </div>
         <div class="card" style="margin-top:16px"><div class="card-head"><h3>私聊配置 <span class="count-pill" id="prvTotal">0</span></h3>
@@ -513,7 +529,28 @@
       <section class="view hidden" id="view-models">
         <div class="card">
           <div class="card-head">
-            <div><h3>当前默认大模型</h3><p class="muted">后台所有大模型调用（微信应答、问答测试、知识库接口）如未特别指定，均使用默认模型；切换后主服务下一次生成即生效，无需重启。</p></div>
+            <div><h3>分场景模型（群聊 / 私聊）</h3><p class="muted">微信应答按消息所属场景选模型：群聊用「群聊应答」，私聊用「私聊应答」。留「跟随全局默认」则用下面的默认模型。保存后主服务下一次生成即生效，无需重启；每条回复都会把实际使用的模型记进日志与「AI 用量」。</p></div>
+          </div>
+          <div class="scene-grid">
+            <div class="scene-item">
+              <label>群聊应答</label>
+              <select id="llmSceneGroup" style="min-width:240px"></select>
+              <span class="muted small" id="llmSceneGroupEff">当前生效：—</span>
+            </div>
+            <div class="scene-item">
+              <label>私聊应答</label>
+              <select id="llmScenePrivate" style="min-width:240px"></select>
+              <span class="muted small" id="llmScenePrivateEff">当前生效：—</span>
+            </div>
+          </div>
+          <div class="row-gap" style="margin-top:14px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" id="btnLlmSceneSave">保存分场景模型</button>
+            <span class="muted small">未单独选择时依次回落到：全局默认模型 → config.yaml</span>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head">
+            <div><h3>当前默认大模型</h3><p class="muted">没有单独指定场景模型时（问答测试、知识库接口、插件调用等）都用这个默认模型；切换后主服务下一次生成即生效，无需重启。</p></div>
           </div>
           <div class="kv-list" id="llmEffective"></div>
           <div class="row-gap" style="margin-top:14px;flex-wrap:wrap">
@@ -524,7 +561,14 @@
         </div>
         <div class="card" style="margin-top:16px">
           <div class="card-head"><h3>模型列表 <span class="count-pill" id="llmCount">0</span></h3>
-            <div class="row-gap">
+            <div class="row-gap" style="flex-wrap:wrap;justify-content:flex-end">
+              <select id="llmImportMode" style="height:30px;padding:4px 8px;font-size:12.5px" title="导入方式">
+                <option value="merge">导入：合并（同名覆盖）</option>
+                <option value="replace">导入：全量替换</option>
+              </select>
+              <input type="file" id="llmImportInput" class="hidden" accept=".json,application/json">
+              <button class="btn btn-ghost btn-sm" id="btnLlmExport" title="导出全部模型配置为 JSON（含明文 API Key，可用于换机器 / 备份）">导出配置</button>
+              <button class="btn btn-ghost btn-sm" id="btnLlmImportFile" title="从导出的 JSON 文件恢复模型配置">导入配置</button>
               <button class="btn btn-ghost btn-sm" id="btnLlmImport" title="把 config.yaml 里正在用的 external_llm 加进来并设为默认">从当前配置导入</button>
               <button class="btn btn-primary btn-sm" id="btnLlmNew">新增模型</button>
             </div></div>
@@ -799,6 +843,6 @@
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/marked.min.js"></script>
 <script src="/static/vendor/purify.min.js"></script>
-<script src="/static/app.js?v=20261120beta1"></script>
+<script src="/static/app.js?v=20261120beta3"></script>
 </body>
 </html>

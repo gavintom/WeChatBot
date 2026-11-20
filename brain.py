@@ -1138,21 +1138,26 @@ class HybridRAGBrain(Brain):
         # 本次生成「特别指定」的模型（None = 用管理端选定的默认模型）。
         # answer() / chat_only() 进出都会复位，避免上一次指定污染下一次。
         self.model_override = None
+        # 本次生成的场景（group 群聊 / private 私聊 / None 不区分）。
+        # 管理端可以给两个场景各选一个模型，解析优先级见 store.resolve_llm_config。
+        self.scene = None
 
     def describe(self):
         return f"大脑=外部LLM({self.llm.get('model')}) {self.retriever.describe()}"
 
-    def _resolve_llm(self):
+    def _resolve_llm(self, scene=None):
         """本次生成该用哪套大模型配置。
 
-        优先级：**调用方显式指定的 model** > 管理端「AI 大模型」页选定的默认模型 >
-        config.yaml 的 brain.external_llm（在调用方处理 None 时兜底）。
-        放在每次生成时解析而不是 __init__ 时，是为了后台切换默认模型后
+        优先级：**调用方显式指定的 model** > 该场景（群聊/私聊）选定的模型 >
+        管理端选定的全局默认模型 > config.yaml 的 brain.external_llm（在调用方处理 None 时兜底）。
+        放在每次生成时解析而不是 __init__ 时，是为了后台切换模型后
         **无需重启主服务**；brain_lock 保证同一进程内不会有两个 answer() 并发改 self.llm。
         """
         try:
             import store
-            return store.resolve_llm_config(getattr(self, "model_override", None))
+            return store.resolve_llm_config(
+                getattr(self, "model_override", None),
+                scene if scene is not None else getattr(self, "scene", None))
         except Exception as e:
             self.log("读取默认大模型失败，回退 config.yaml | %s", repr(e)[:150])
             return None
@@ -1424,11 +1429,14 @@ class HybridRAGBrain(Brain):
         return body
 
     def answer(self, q, history=None, sources=None, system_prompt=None,
-               system_prompt_extra=None, model=None):
+               system_prompt_extra=None, model=None, scene=None):
         """对外唯一入口：生成答案 → 摘出图片标记 → 返回 (纯文字)。
 
         model：可选，本次调用「特别指定」的大模型（名称 / 上游模型 ID）。
-        不传时一律走管理端「AI 大模型」页选定的默认模型。
+        不传时按 scene 走管理端「AI 大模型」页选定的场景模型 / 全局默认模型。
+
+        scene：可选，group（群聊）/ private（私聊）。管理端给两个场景各选模型时，
+        靠它决定本次用哪一个；不传则跳过分场景配置，直接用全局默认。
 
         sources：知识库文档名列表（策略过滤）。None=全库；[]=空策略不检索。
         system_prompt：本次请求专属提示词（群聊/私聊策略）；为空则沿用
@@ -1440,13 +1448,16 @@ class HybridRAGBrain(Brain):
         # ⚠️ 不能写成 str(model).strip() —— str(None) 是 "None"，
         # 会把「未指定」误判成「指定了一个叫 None 的模型」，默认模型永远不生效。
         self.model_override = (str(model or "").strip() or None)
+        self.scene = str(scene or "").strip().lower() or None
         try:
             text, cands, icfg = self._generate(q, history=history, sources=sources,
                                                system_prompt=system_prompt,
-                                               system_prompt_extra=system_prompt_extra)
+                                               system_prompt_extra=system_prompt_extra,
+                                               scene=self.scene)
         finally:
-            # 无论成功失败都要清掉，否则下一次普通调用会误用上一次的指定模型
+            # 无论成功失败都要清掉，否则下一次普通调用会误用上一次的指定模型 / 场景
             self.model_override = None
+            self.scene = None
         try:
             return self._finish(text, cands, icfg)
         except Exception as e:
@@ -1479,10 +1490,12 @@ class HybridRAGBrain(Brain):
         ⚠️ 必须持有 brain_lock 调用：self.llm 是全进程共享状态。
         """
         self.model_override = (str(model or "").strip() or None)
+        # 插件直连固定走全局默认：插件调用没有「群聊/私聊」语境，别继承上一次场景
+        self.scene = None
         prev_llm = self.llm
         llm, attempts = {}, []
         try:
-            llm = dict(self._resolve_llm() or (self.cfg.get("external_llm") or {}))
+            llm = dict(self._resolve_llm(None) or (self.cfg.get("external_llm") or {}))
             if not (llm.get("base_url") and llm.get("model")):
                 raise RuntimeError("没有可用的内置大模型配置")
             if temperature is not None:
@@ -1510,6 +1523,7 @@ class HybridRAGBrain(Brain):
         finally:
             self.llm = prev_llm
             self.model_override = None
+            self.scene = None
         # 插件的模型调用同样要计费、要进后台「AI 用量」页，不能只记客服链路。
         try:
             import store
@@ -1550,11 +1564,20 @@ class HybridRAGBrain(Brain):
         raise RuntimeError("内置大模型没有返回内容")
 
     def _generate(self, q, history=None, sources=None, system_prompt=None,
-                  system_prompt_extra=None):
-        """只负责检索 + 生成原文。返回 (文本, 候选图列表, 图片配置)。"""
-        # 每次生成前重新解析生效模型：后台切换默认模型立即生效。
+                  system_prompt_extra=None, scene=None):
+        """只负责检索 + 生成原文。返回 (文本, 候选图列表, 图片配置)。
+
+        scene：本次场景（group / private），用于选模型；None 表示不区分场景。
+        """
+        # 每次生成前重新解析生效模型：后台切换默认模型 / 场景模型立即生效。
         # 解析不到（没设默认 / DB 异常）就明确回退 config.yaml，不能残留上一次的默认模型。
-        self.llm = self._resolve_llm() or (self.cfg.get("external_llm") or {})
+        self.llm = self._resolve_llm(scene) or (self.cfg.get("external_llm") or {})
+        # 本次实际用的模型写进日志：群聊/私聊可以各配一个模型，出问题时第一眼要能
+        # 看出「这条回复是哪个模型答的」，否则只能靠猜。
+        self.log("本次生成模型 | 场景=%s | 模型=%s | 纳管id=%s | 来源=%s",
+                 {"group": "群聊", "private": "私聊"}.get(scene or "", scene or "不限"),
+                 self.llm.get("model") or "-", self.llm.get("id") or "-",
+                 self.llm.get("source") or "config.yaml")
         # 本次 answer() 里的**所有** LLM 调用记录（每次尝试一条），供 app.py 埋点。
         # 为什么要多条：流式失败会自动重试非流式，这两次调用**都真的花了钱**。
         # 只记最后一次的话，重试频繁时账目会明显偏低（漏掉流式那次的消耗）。
@@ -1616,6 +1639,8 @@ class HybridRAGBrain(Brain):
                 if u:
                     u.update(stream=True, latency_ms=int((time.time() - t) * 1000),
                              ok=bool(partial.strip()) and (done or len(partial) >= keep_min))
+                    # 上游没回模型名时用本次请求的模型兜底，保证「AI 用量」每行都有模型
+                    u.setdefault("model", self.llm.get("model"))
                     self.last_attempts.append(u)
                 if partial.strip() and (done or len(partial) >= keep_min):
                     self.log("LLM 流式返回 | 耗时=%.1fs 长度=%d 完整=%s%s",
@@ -1638,6 +1663,7 @@ class HybridRAGBrain(Brain):
             if u:
                 u.update(stream=False, latency_ms=int((time.time() - t) * 1000),
                          ok=bool(text.strip()))
+                u.setdefault("model", self.llm.get("model"))
                 self.last_attempts.append(u)
             if text.strip():
                 self.log("LLM 非流式返回 | 耗时=%.1fs 长度=%d%s", time.time() - t, len(text),

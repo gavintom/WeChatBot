@@ -174,7 +174,8 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     latency_ms        INTEGER,
     stream            INTEGER NOT NULL DEFAULT 1,
     ok                INTEGER NOT NULL DEFAULT 1,
-    source            TEXT                       -- wechat / api / kb_test
+    source            TEXT,                      -- wechat / api / kb_test / plugin
+    scene             TEXT                       -- 群聊 group / 私聊 private（仅 wechat）
 );
 CREATE INDEX IF NOT EXISTS idx_llm_day ON llm_usage(day);
 CREATE INDEX IF NOT EXISTS idx_llm_ts ON llm_usage(ts);
@@ -658,8 +659,10 @@ def init_db():
                                   ("human_name", "TEXT NOT NULL DEFAULT ''")],
                 # 费用列：老库的 llm_usage / api_calls 没有 cost，补齐后历史行记 0
                 # llm_id：老流水没有「纳管模型」维度，保持 NULL（对照表里归到「未纳管/历史」）
+                # scene：分场景选模型（v1.1.2-beta2）后才有；老流水保持 NULL
                 "llm_usage": [("cost", "REAL NOT NULL DEFAULT 0"),
-                              ("llm_id", "INTEGER")],
+                              ("llm_id", "INTEGER"),
+                              ("scene", "TEXT")],
                 "api_calls": [("cost", "REAL NOT NULL DEFAULT 0")],
                 # 对话记录「配图」列：老流水没记这个维度，保持 NULL（前端显示「-」）
                 # plugin：老流水没有「插件来源」维度，保持 NULL（前端归到「—」）
@@ -1051,23 +1054,27 @@ def _cost_of(model, pt, ct):
 
 # ---------- 大模型调用流水 ----------
 
-def log_llm_usage(attempts, model=None, source="normal", llm_id=None):
+def log_llm_usage(attempts, model=None, source="normal", llm_id=None, scene=None):
     """一次 answer() 可能有多行（重试 / 流式失败）。**绝不能抛异常**（统计不能拖垮回复）。
 
     llm_id：本次实际使用的「AI 大模型」页纳管模型 id。用 id 而不是 model 字符串，
     才能区分两个纳管模型共用同一个上游模型 ID（不同供应商 / base_url）的情况。
+    scene：群聊 / 私聊（wechat 来源才有）。分场景选模型后，靠这一列核对
+    「配置选的是不是真的用上了」，不然只能翻 app.log。
     """
     try:
         now = time.time()
+        scene = norm_llm_scene(scene) or None
         for a in attempts or []:
             m = model or a.get("model")
             pt, ct = a.get("prompt_tokens"), a.get("completion_tokens")
             _write("INSERT INTO llm_usage(ts,day,model,llm_id,prompt_tokens,completion_tokens,"
-                   "total_tokens,cost,latency_ms,stream,ok,source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "total_tokens,cost,latency_ms,stream,ok,source,scene) "
+                   "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (now, _day(now), m, llm_id, pt, ct, a.get("total_tokens"),
                     _cost_of(m, pt, ct), a.get("latency_ms"),
                     1 if a.get("stream") else 0,
-                    1 if a.get("ok", True) else 0, source))
+                    1 if a.get("ok", True) else 0, source, scene))
     except Exception:
         pass
 
@@ -1797,6 +1804,20 @@ def list_group_members(group_id):
 
 LLM_DEFAULT_KEY = "default_llm_id"
 
+# 分场景默认模型（v1.1.2-beta2）：群聊 / 私聊各管一处。
+# 优先级：调用方显式指定 > 场景默认 > 全局默认 > config.yaml 兜底。
+# 存 settings 表而不是给 llm_models 加列：一个模型可以被两个场景同时选中，
+# 用「场景 → 模型 id」的键值对表达最直接，删模型时也只需清掉指向它的键。
+LLM_SCENE_KEYS = {"group": "default_llm_id_group",
+                  "private": "default_llm_id_private"}
+LLM_SCENE_NAMES = {"group": "群聊", "private": "私聊"}
+
+
+def norm_llm_scene(scene):
+    """把外部传入的场景收敛成 group / private；不认识的一律当成「没指定」。"""
+    s = str(scene or "").strip().lower()
+    return s if s in LLM_SCENE_KEYS else ""
+
 
 def _mask_key(k):
     """管理端只显示掩码，绝不把明文密钥发到页面（截图/演示安全）。"""
@@ -1839,6 +1860,59 @@ def default_llm_id():
         return 0
 
 
+def scene_llm_id(scene):
+    """某场景（group / private）选定的模型 id；0 = 没选，跟随全局默认。"""
+    k = LLM_SCENE_KEYS.get(norm_llm_scene(scene))
+    if not k:
+        return 0
+    try:
+        return int(get_setting(k, "") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_scene_llm(scene, mid):
+    """mid 为空 / 0 = 该场景跟随全局默认。返回 0 或模型 id。"""
+    s = norm_llm_scene(scene)
+    if not s:
+        raise ValueError("场景只能是 group（群聊）或 private（私聊）")
+    k = LLM_SCENE_KEYS[s]
+    if mid in (None, "", 0, "0"):
+        _write("DELETE FROM settings WHERE k=?", (k,))
+        return 0
+    row = _one("SELECT id FROM llm_models WHERE id=? AND enabled=1", (int(mid),))
+    if not row:
+        raise ValueError("%s模型不存在或已停用，不能设为场景默认" % LLM_SCENE_NAMES[s])
+    set_setting(k, int(row["id"]))
+    return int(row["id"])
+
+
+def set_scene_llms(data):
+    """一次保存多个场景（前端「保存」按钮发 {group: id, private: id}）。
+
+    先全部校验再落库：写一半失败会让群聊/私聊配置对不上，排查起来很费劲。
+    返回 {scene: id}，只含本次传了的场景。
+    """
+    d = data or {}
+    plan = {}
+    for s in LLM_SCENE_KEYS:
+        if s not in d:
+            continue
+        v = d.get(s)
+        if v in (None, "", 0, "0"):
+            plan[s] = 0
+            continue
+        row = _one("SELECT id FROM llm_models WHERE id=? AND enabled=1", (int(v),))
+        if not row:
+            raise ValueError("%s模型不存在或已停用" % LLM_SCENE_NAMES[s])
+        plan[s] = int(row["id"])
+    if not plan:
+        raise ValueError("场景只能是 group（群聊）或 private（私聊）")
+    for s, mid in plan.items():
+        set_scene_llm(s, mid)
+    return plan
+
+
 def set_default_llm(mid):
     """mid 为空 / 0 = 清除默认，brain 回退到 config.yaml 的 brain.external_llm。"""
     if mid in (None, "", 0, "0"):
@@ -1851,10 +1925,11 @@ def set_default_llm(mid):
     return int(row["id"])
 
 
-def save_llm_model(data):
-    """新增 / 编辑模型。编辑时 api_key 留空表示「不修改」。
+def _norm_llm_payload(data):
+    """校验并规整一条模型配置（不含 id / 密钥继承）。
 
-    返回模型 id；校验失败抛 ValueError（管理端会转成 400 提示）。
+    save_llm_model 与「导入配置文件」共用同一套规则：分别写两套校验，
+    迟早会出现「页面上能保存、导入同一份配置却被拒」这种漂移。
     """
     d = data or {}
     name = str(d.get("name") or "").strip()
@@ -1882,6 +1957,29 @@ def save_llm_model(data):
             raise ValueError("超时 / token 参数必须是整数")
         return max(lo, min(hi, n))
 
+    return {
+        "name": name,
+        "provider": str(d.get("provider") or "").strip(),
+        "base_url": base_url,
+        "api_key": str(d.get("api_key") or "").strip(),
+        "model": model,
+        "temperature": temp,
+        "stream": bool(d.get("stream", True)),
+        "max_tokens": _int(d.get("max_tokens"), 0, 0, 200000),
+        "connect_timeout": _int(d.get("connect_timeout"), 10, 1, 300),
+        "read_timeout": _int(d.get("read_timeout"), 60, 1, 3600),
+        "total_timeout": _int(d.get("total_timeout"), 240, 1, 7200),
+        "enabled": bool(d.get("enabled", True)),
+    }
+
+
+def save_llm_model(data):
+    """新增 / 编辑模型。编辑时 api_key 留空表示「不修改」。
+
+    返回模型 id；校验失败抛 ValueError（管理端会转成 400 提示）。
+    """
+    d = data or {}
+    p = _norm_llm_payload(d)
     mid = d.get("id")
     old = None
     if mid:
@@ -1889,18 +1987,15 @@ def save_llm_model(data):
         if not old:
             raise ValueError("模型不存在")
     dup = _one("SELECT id FROM llm_models WHERE name=? AND id<>?",
-               (name, int(mid or 0)))
+               (p["name"], int(mid or 0)))
     if dup:
-        raise ValueError("已存在同名模型「%s」" % name)
+        raise ValueError("已存在同名模型「%s」" % p["name"])
     # 编辑时留空 = 保留原密钥；新增时空密钥也允许（本地网关常不需鉴权）
-    api_key = str(d.get("api_key") or "").strip() or (old["api_key"] if old else "")
-    vals = (name, str(d.get("provider") or "").strip(), base_url, api_key, model,
-            temp, 1 if d.get("stream", True) else 0,
-            _int(d.get("max_tokens"), 0, 0, 200000),
-            _int(d.get("connect_timeout"), 10, 1, 300),
-            _int(d.get("read_timeout"), 60, 1, 3600),
-            _int(d.get("total_timeout"), 240, 1, 7200),
-            1 if d.get("enabled", True) else 0)
+    api_key = p["api_key"] or (old["api_key"] if old else "")
+    vals = (p["name"], p["provider"], p["base_url"], api_key, p["model"],
+            p["temperature"], 1 if p["stream"] else 0,
+            p["max_tokens"], p["connect_timeout"], p["read_timeout"],
+            p["total_timeout"], 1 if p["enabled"] else 0)
     now = time.time()
     if old:
         _write("UPDATE llm_models SET name=?,provider=?,base_url=?,api_key=?,model=?,"
@@ -1923,54 +2018,257 @@ def delete_llm_model(mid):
         # 删掉的正好是默认模型时一并清除，brain 才会安全回退到 config.yaml
         conn.execute("DELETE FROM settings WHERE k=? AND v=?",
                      (LLM_DEFAULT_KEY, str(mid)))
+        # 分场景默认模型同理：否则群聊/私聊会一直指向一个已经不存在的模型，
+        # 每次生成都要先查空再回退，配置页也会显示「已选但没生效」这种怪状态。
+        for k in LLM_SCENE_KEYS.values():
+            conn.execute("DELETE FROM settings WHERE k=? AND v=?", (k, str(mid)))
     _write_many(_do)
     return {"name": row["name"]}
 
 
-def resolve_llm_config(model=None):
+def _llm_row_to_cfg(row, source):
+    """llm_models 行 → brain 用的 external_llm 风格配置。"""
+    return {
+        "id": row["id"], "name": row["name"], "source": source,
+        "base_url": row["base_url"], "api_key": row["api_key"],
+        "model": row["model"], "temperature": row["temperature"],
+        "stream": bool(row["stream"]),
+        "max_tokens": int(row["max_tokens"] or 0),
+        "connect_timeout": int(row["connect_timeout"] or 10),
+        "read_timeout": int(row["read_timeout"] or 60),
+        "total_timeout": int(row["total_timeout"] or 240),
+        # 这两个是 brain 的可选开关，表里不单独存，沿用 config.yaml 的默认值
+        "partial_min_chars": 20, "stream_usage": True,
+    }
+
+
+def resolve_llm_config(model=None, scene=None):
     """brain 用：本次生成实际生效的 external_llm 风格配置 dict；找不到返回 None。
 
-    优先级：调用方显式指定的 model > 管理端选定的默认模型 > None（回退 config.yaml）。
-    每次生成都查一次库，所以后台切换默认模型**无需重启主服务**。
+    优先级：调用方显式指定的 model > 该场景（群聊/私聊）选定的模型 >
+    管理端选定的全局默认模型 > None（回退 config.yaml）。
+    每次生成都查一次库，所以后台切换模型 / 场景模型**无需重启主服务**。
+
+    场景模型被停用或删掉时**不报错、直接回退全局默认** —— 运营停用一个模型
+    不该让群聊整条链路哑掉；而显式 model 查不到仍然返回 None（不偷偷换）。
     """
     try:
+        scene = norm_llm_scene(scene)
         if model:
             row = get_llm_model(model)
             if not row:
                 return None          # 显式指定了但查不到，不偷偷换成别家模型
-            source = "override"
-        else:
-            mid = default_llm_id()
-            row = _one("SELECT * FROM llm_models WHERE id=? AND enabled=1", (mid,)) \
-                if mid else None
-            source = "default"
+            cfg = _llm_row_to_cfg(row, "override")
+            cfg["scene"] = scene
+            return cfg
+        if scene:
+            sid = scene_llm_id(scene)
+            if sid:
+                row = _one("SELECT * FROM llm_models WHERE id=? AND enabled=1", (sid,))
+                if row:
+                    cfg = _llm_row_to_cfg(row, "scene")
+                    cfg["scene"] = scene
+                    return cfg
+        mid = default_llm_id()
+        row = _one("SELECT * FROM llm_models WHERE id=? AND enabled=1", (mid,)) \
+            if mid else None
         if not row:
             return None
-        return {
-            "id": row["id"], "name": row["name"], "source": source,
-            "base_url": row["base_url"], "api_key": row["api_key"],
-            "model": row["model"], "temperature": row["temperature"],
-            "stream": bool(row["stream"]),
-            "max_tokens": int(row["max_tokens"] or 0),
-            "connect_timeout": int(row["connect_timeout"] or 10),
-            "read_timeout": int(row["read_timeout"] or 60),
-            "total_timeout": int(row["total_timeout"] or 240),
-            # 这两个是 brain 的可选开关，表里不单独存，沿用 config.yaml 的默认值
-            "partial_min_chars": 20, "stream_usage": True,
-        }
+        cfg = _llm_row_to_cfg(row, "default")
+        cfg["scene"] = scene
+        return cfg
     except Exception:
         return None                   # DB 异常绝不拖垮回复链路，回退 config.yaml
 
 
-def llm_models_status(cfg_fallback=None):
-    """管理端概览：默认 id + 当前实际生效模型（遮蔽密钥）。"""
+def _llm_effective_of(cfg_fallback=None):
+    """当前全局生效模型的摘要（不含密钥），给管理端「当前默认大模型」卡片用。"""
     c = resolve_llm_config()
     if c:
-        eff = {"name": c["name"], "model": c["model"],
-               "base_url": c["base_url"], "source": "default"}
-    else:
-        f = cfg_fallback or {}
-        eff = {"name": "config.yaml · brain.external_llm",
-               "model": f.get("model") or "", "base_url": f.get("base_url") or "",
-               "source": "config"}
-    return {"default_id": default_llm_id(), "effective": eff}
+        return {"name": c["name"], "model": c["model"],
+                "base_url": c["base_url"], "source": "default"}
+    f = cfg_fallback or {}
+    return {"name": "config.yaml · brain.external_llm",
+            "model": f.get("model") or "", "base_url": f.get("base_url") or "",
+            "source": "config"}
+
+
+def llm_models_status(cfg_fallback=None):
+    """管理端概览：默认 id + 全局生效模型 + 各场景（群聊/私聊）生效模型。
+
+    scenes[*].inherited = 该场景没单独选（或选的模型已停用），此刻跟随全局默认。
+    页面靠这个标记决定下拉框是「跟随全局默认」还是某个具体模型。
+    """
+    scenes = {}
+    for s, label in LLM_SCENE_NAMES.items():
+        mid = scene_llm_id(s)
+        c = resolve_llm_config(scene=s)
+        if c:
+            src = c.get("source") or "config"
+            eff = {"name": c["name"], "model": c["model"],
+                   "base_url": c["base_url"],
+                   "source": src if src in ("scene", "default") else "config"}
+        else:
+            eff = {"name": "config.yaml · brain.external_llm", "model": "",
+                   "base_url": "", "source": "config"}
+        scenes[s] = {"label": label, "id": mid, "effective": eff,
+                     "inherited": (c or {}).get("source") != "scene"}
+    return {"default_id": default_llm_id(),
+            "effective": _llm_effective_of(cfg_fallback),
+            "scenes": scenes}
+
+
+# ---------------------------------------------------------------- 大模型配置导出 / 导入
+# 用途：换机器、多套部署之间搬配置、改之前留个备份。
+# 引用关系（默认模型、群聊/私聊场景）在文件里用**模型名称**表达，不用 id：
+# id 只在单实例内自增，跨实例直接搬 id 会指到别人家的模型上。
+LLM_EXPORT_FORMAT = "wechatbot.llm_models"
+LLM_EXPORT_VERSION = 1
+LLM_IMPORT_MAX = 200        # 单次导入条目上限，防止手抖贴进一个巨大的文件
+
+
+def _llm_name_of(mid):
+    """模型 id → 名称；0 / 查不到返回空串（导出时用它写引用关系）。"""
+    try:
+        if not mid:
+            return ""
+        row = _one("SELECT name FROM llm_models WHERE id=?", (int(mid),))
+        return row["name"] if row else ""
+    except Exception:
+        return ""
+
+
+def export_llm_models(with_secrets=True):
+    """导出纳管的大模型配置（含引用关系），返回可直接 json.dumps 的 dict。
+
+    with_secrets=False 时 api_key 留空，供「不交出密钥」的备份 / 演示场景使用。
+    默认带明文密钥：导入到新机器后必须能直接跑起来，否则导出没有意义；
+    也正因如此，导出文件等同密钥载体，管理端要提醒妥善保管。
+    """
+    models = []
+    for r in _rows("SELECT * FROM llm_models ORDER BY id"):
+        models.append({
+            "name": r["name"], "provider": r["provider"] or "",
+            "base_url": r["base_url"],
+            "api_key": (r["api_key"] or "") if with_secrets else "",
+            "model": r["model"],
+            "temperature": r["temperature"],
+            "stream": bool(r["stream"]),
+            "max_tokens": int(r["max_tokens"] or 0),
+            "connect_timeout": int(r["connect_timeout"] or 10),
+            "read_timeout": int(r["read_timeout"] or 60),
+            "total_timeout": int(r["total_timeout"] or 240),
+            "enabled": bool(r["enabled"]),
+        })
+    return {
+        "format": LLM_EXPORT_FORMAT,
+        "version": LLM_EXPORT_VERSION,
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "with_secrets": bool(with_secrets),
+        "models": models,
+        "default": _llm_name_of(default_llm_id()),
+        "scenes": {s: _llm_name_of(scene_llm_id(s)) for s in LLM_SCENE_KEYS},
+    }
+
+
+def import_llm_models(data, mode="merge"):
+    """导入「导出大模型配置」生成的内容。
+
+    mode="merge"   同名模型更新、文件里没有的模型保留（默认，最安全）
+    mode="replace" 同名更新后再删除文件里没有的模型（等于用文件整体覆盖整套配置）
+
+    先整体校验再落库：导入一半失败会留下半个配置，比直接报错难收拾得多。
+    返回 {mode, added, updated, removed, total, default, scenes, missing}；
+    校验不过抛 ValueError（管理端转 400，库内不变）。
+    """
+    mode = str(mode or "merge").strip().lower()
+    if mode not in ("merge", "replace"):
+        raise ValueError("导入方式只能是 merge（合并）或 replace（替换）")
+    # 容忍直接给一个 models 数组（手工整理的文件常见这种写法）
+    if isinstance(data, list):
+        data = {"models": data}
+    if not isinstance(data, dict):
+        raise ValueError("导入内容必须是 JSON 对象")
+    fmt = str(data.get("format") or "").strip()
+    if fmt and fmt != LLM_EXPORT_FORMAT:
+        raise ValueError("不是本站导出的模型配置文件（format=%s）" % fmt)
+    raw = data.get("models")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("导入内容里没有 models 列表")
+    if len(raw) > LLM_IMPORT_MAX:
+        raise ValueError("一次最多导入 %d 个模型" % LLM_IMPORT_MAX)
+
+    items, seen = [], set()
+    for i, x in enumerate(raw, 1):
+        if not isinstance(x, dict):
+            raise ValueError("第 %d 个模型格式不对（应为对象）" % i)
+        try:
+            p = _norm_llm_payload(x)
+        except ValueError as e:
+            raise ValueError("第 %d 个模型（%s）：%s" % (i, x.get("name") or "-", e))
+        if p["name"] in seen:
+            raise ValueError("导入内容里有重名模型「%s」" % p["name"])
+        seen.add(p["name"])
+        items.append(p)
+
+    added, updated, by_name = 0, 0, {}
+    for p in items:
+        row = _one("SELECT id FROM llm_models WHERE name=?", (p["name"],))
+        payload = dict(p)
+        if row:
+            # 带上 id 走更新：文件里 api_key 为空时（脱敏导出）沿用库里原来的密钥
+            payload["id"] = row["id"]
+            updated += 1
+        else:
+            added += 1
+        by_name[p["name"]] = save_llm_model(payload)
+
+    removed = []
+    if mode == "replace":
+        for row in _rows("SELECT id, name FROM llm_models"):
+            if row["name"] not in by_name:
+                delete_llm_model(row["id"])
+                removed.append(row["name"])
+
+    # 引用关系按名称映射到本实例的 id；文件里没写的项在 replace 模式下视为「不设」，
+    # 这样「导出 A → 导入 B（替换）」得到的配置和 A 一致，不会残留 B 原来的默认。
+    has_default = ("default" in data) or ("default_name" in data) or mode == "replace"
+    default_name = str(data.get("default") or data.get("default_name") or "").strip()
+    default_set, missing = "", []
+    if has_default:
+        if not default_name:
+            set_default_llm(0)
+        elif default_name in by_name:
+            try:
+                set_default_llm(by_name[default_name])
+                default_set = default_name
+            except ValueError as e:
+                missing.append("默认模型「%s」：%s" % (default_name, e))
+        else:
+            missing.append("默认模型「%s」不在导入列表里" % default_name)
+
+    scenes_in = data.get("scenes")
+    scenes_in = scenes_in if isinstance(scenes_in, dict) else {}
+    scene_set = {}
+    for s, label in LLM_SCENE_NAMES.items():
+        if s not in scenes_in:
+            if mode == "replace":
+                set_scene_llm(s, 0)
+            continue
+        name = str(scenes_in.get(s) or "").strip()
+        if not name:
+            set_scene_llm(s, 0)
+            scene_set[s] = ""
+            continue
+        if name not in by_name:
+            missing.append("%s模型「%s」不在导入列表里" % (label, name))
+            continue
+        try:
+            set_scene_llm(s, by_name[name])
+            scene_set[s] = name
+        except ValueError as e:
+            missing.append("%s模型「%s」：%s" % (label, name, e))
+
+    return {"mode": mode, "added": added, "updated": updated,
+            "removed": removed, "total": len(items),
+            "default": default_set, "scenes": scene_set, "missing": missing}

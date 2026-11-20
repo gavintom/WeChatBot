@@ -3,8 +3,12 @@
 路由实现从 admin/app.py 拆出，函数体未改动；共用工具在 admin/web.py。
 """
 
+import json
+import time
+from urllib.parse import quote
+
 import yaml
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session
 
 import followup
 import store
@@ -197,6 +201,86 @@ def api_llm_models_default():
     return ok(message=("已清除默认模型，回退到 config.yaml" if not mid
                         else "默认大模型已切换，主服务下一次生成即生效（无需重启）"),
                **_llm_overview())
+
+
+@bp.route("/api/llm-models/scene", methods=["POST"])
+@login_required
+def api_llm_models_scene():
+    """分场景（群聊 / 私聊）默认模型：{group: id, private: id}，0/空 = 跟随全局默认。
+
+    一次保存两个场景：页面只有一个「保存」按钮，分两次写会让群聊/私聊配置
+    在中间状态下短暂对不上，出问题也不好复现。
+    """
+    d = body()
+    try:
+        saved = store.set_scene_llms(d)
+    except (ValueError, TypeError, OSError) as e:
+        return fail(e)
+    names = []
+    for s, mid in saved.items():
+        if not mid:
+            names.append("%s=跟随全局默认" % store.LLM_SCENE_NAMES[s])
+            continue
+        row = store.get_llm_model(mid)
+        names.append("%s=%s(id=%s)" % (store.LLM_SCENE_NAMES[s],
+                                       (row or {}).get("name") or "-", mid))
+    adminlog("设置分场景大模型 user=%s %s", session.get("uid"), " ".join(names))
+    return ok(message="已保存分场景模型：%s；下一条消息即生效" % "，".join(names),
+              **_llm_overview())
+
+
+@bp.route("/api/llm-models/export")
+@login_required
+def api_llm_models_export():
+    """下载模型配置 JSON（含默认模型 / 群聊私聊场景引用，引用用名称表达）。
+
+    `?secrets=0` 导出不带 api_key 的版本，适合「备份 / 给同事看配置」这种
+    不需要交出密钥的场合；默认带明文密钥，否则导到新机器上不能用。
+    """
+    with_secrets = request.args.get("secrets") not in ("0", "false", "no")
+    d = store.export_llm_models(with_secrets=with_secrets)
+    data = json.dumps(d, ensure_ascii=False, indent=2) + "\n"
+    adminlog("导出大模型配置 user=%s 模型数=%s 含密钥=%s", session.get("uid"),
+             len(d["models"]), with_secrets)
+    name = "llm-models-%s%s.json" % (time.strftime("%Y%m%d-%H%M%S"),
+                                     "" if with_secrets else "-no-secrets")
+    return current_app.response_class(
+        data, mimetype="application/json; charset=utf-8",
+        headers={"Content-Disposition":
+                 "attachment; filename*=UTF-8''%s" % quote(name)})
+
+
+@bp.route("/api/llm-models/import", methods=["POST"])
+@login_required
+def api_llm_models_import():
+    """导入模型配置：{data: <导出文件内容>, mode: merge|replace}。
+
+    也接受 {text: "<json 文本>"}，方便直接粘贴；data 传字符串时按 JSON 解析。
+    """
+    d = body()
+    payload = d.get("data")
+    if payload is None:
+        payload = d.get("text")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return fail("内容不是合法的 JSON")
+    if payload is None:
+        return fail("没有收到要导入的内容")
+    try:
+        r = store.import_llm_models(payload, mode=d.get("mode") or "merge")
+    except (ValueError, TypeError) as e:
+        return fail(e)
+    msg = "导入完成：新增 %d 个、更新 %d 个" % (r["added"], r["updated"])
+    if r["removed"]:
+        msg += "、删除 %d 个（%s）" % (len(r["removed"]), "、".join(r["removed"]))
+    if r["missing"]:
+        msg += "；有 %d 处引用无效已忽略" % len(r["missing"])
+    adminlog("导入大模型配置 user=%s 方式=%s 新增=%s 更新=%s 删除=%s 缺失=%s",
+             session.get("uid"), r["mode"], r["added"], r["updated"],
+             len(r["removed"]), "; ".join(r["missing"]))
+    return ok(message=msg, result=r, **_llm_overview())
 
 
 @bp.route("/api/llm-models/import-config", methods=["POST"])

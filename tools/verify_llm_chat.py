@@ -19,7 +19,7 @@ import brain  # noqa: E402
 # 若运行环境已配了真实 LLM（部署机就是），会覆盖下面 make_brain 传入的假配置，
 # 让「请求落到哪」这类断言不稳定。统一屏蔽，强制走本脚本的假 cfg。
 import store as _store  # noqa: E402
-_store.resolve_llm_config = lambda model=None: None
+_store.resolve_llm_config = lambda model=None, scene=None: None
 
 OK, FAIL = [], []
 

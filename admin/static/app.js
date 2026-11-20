@@ -113,7 +113,7 @@
     chatlog: ['聊天记录', '插件收到的原始消息归档，按系统配置保留 1~12 个月'],
     media: ['媒体文件', '群聊/私聊的图片与文件，按群名/wxid 检索，支持全部与分页'],
     llm: ['AI 用量', '大模型调用记录、token 与费用统计'],
-    models: ['AI 大模型', '新增 / 编辑大模型，设置默认模型'],
+    models: ['AI 大模型', '群聊 / 私聊分场景选模型，设置默认模型'],
     apicalls: ['API 记录', '知识库 HTTP 接口的每一次调用（含失败）'],
     groups: ['群聊配置', '只有配置表内的群才会响应'],
     private: ['私聊配置', '唤醒词、白名单、黑名单与知识库配置'],
@@ -240,6 +240,10 @@
     if (name === 'groups' || name === 'private' || name === 'policies' || name === 'knowledge') {
       refreshOptions().then(function () { L[name](); });
     } else { L[name](); }
+    // 群聊 / 私聊配置页顶部的「应答模型」下拉：进页面就拉一次最新场景配置
+    var picker = { groups: ['group', 'grpSceneModel', 'grpSceneModelEff'],
+                   private: ['private', 'prvSceneModel', 'prvSceneModelEff'] }[name];
+    if (picker) loadScenePicker(picker[0], picker[1], picker[2]);
   }
   function refreshOptions() {
     return api('/api/options').then(function (d) {
@@ -963,6 +967,7 @@
         return '<option value="' + x.id + '"' + (x.id === defId ? ' selected' : '') + '>' +
           esc(x.name) + ' · ' + esc(x.model) + '</option>';
       }).join('');
+    renderLlmScenes(d.scenes || {}, items);
     $('modelBody').innerHTML = items.length ? items.map(function (x) {
       return '<tr><td><strong>' + esc(x.name) + '</strong></td>' +
         '<td>' + esc(x.provider || '—') + '</td>' +
@@ -987,6 +992,46 @@
           .then(function (r) { toast(r.message); renderLlmModels(r); }).catch(fail);
       });
     });
+  }
+  /* 分场景模型（群聊 / 私聊）：value=0 表示跟随全局默认。
+     inherited=true 说明此刻用的是全局默认（没选，或原来选的模型已停用）。
+     同一份配置在「AI 大模型」页和「群聊配置 / 私聊配置」页各有一个下拉，
+     三处读写的都是同一个场景设置，改哪边都一样。 */
+  function fillSceneSelect(selId, effId, sc, items) {
+    var sel = $(selId), box = $(effId);
+    if (!sel || !box) return;
+    sc = sc || {};
+    var enabled = (items || []).filter(function (x) { return x.enabled; });
+    sel.innerHTML = '<option value="0">跟随全局默认</option>' + enabled.map(function (x) {
+      return '<option value="' + x.id + '"' +
+        (x.id === (sc.id || 0) ? ' selected' : '') + '>' +
+        esc(x.name) + ' · ' + esc(x.model) + '</option>';
+    }).join('');
+    var eff = sc.effective || {};
+    box.textContent = '当前生效：' + (eff.name || '—') +
+      (eff.model ? ' · ' + eff.model : '') +
+      (sc.inherited
+        ? (sc.id ? '（原选模型已停用，回退全局默认）' : '（跟随全局默认）')
+        : '（本场景独立配置）');
+  }
+  function renderLlmScenes(scenes, items) {
+    fillSceneSelect('llmSceneGroup', 'llmSceneGroupEff', (scenes || {}).group, items);
+    fillSceneSelect('llmScenePrivate', 'llmScenePrivateEff', (scenes || {}).private, items);
+  }
+  /* 群聊 / 私聊配置页的模型下拉：进页面时单独拉一次，避免依赖「AI 大模型」页是否打开过。 */
+  function loadScenePicker(scene, selId, effId) {
+    return api('/api/llm-models').then(function (d) {
+      fillSceneSelect(selId, effId, (d.scenes || {})[scene], d.items);
+    }).catch(function () {});
+  }
+  function saveSceneModel(scene, selId) {
+    var body = {};
+    body[scene] = $(selId).value;
+    return api('/api/llm-models/scene', { method: 'POST', body: body })
+      .then(function (d) {
+        toast(d.message);
+        fillSceneSelect(selId, selId + 'Eff', (d.scenes || {})[scene], d.items);
+      }).catch(fail);
   }
   function editLlmModel(row) {
     var editing = !!row;
@@ -1019,7 +1064,13 @@
     return String(Number(Number(v || 0).toFixed(6)));
   }
   function sourceText(s) {
-    return ({ wechat: '微信消息', api: 'HTTP 接口', kb_test: '问答测试', normal: '其他' })[s] || s || '—';
+    return ({ wechat: '微信消息', api: 'HTTP 接口', kb_test: '问答测试',
+              plugin: '插件调用', normal: '其他' })[s] || s || '—';
+  }
+  /* 场景列：分场景选模型后，这一列是核对「配置有没有真的生效」最直接的证据。
+     老流水 / 非微信来源没有场景，显示空。 */
+  function sceneText(s) {
+    return ({ group: '群聊', private: '私聊' })[s] || '';
   }
   function llmParams() {
     var p = new URLSearchParams({ page: llmPage, limit: llmLimit, days: $('llmDays').value || 30 });
@@ -1180,7 +1231,9 @@
               (r.llm_inferred ? ' <span class="muted small">（按 ID 推断）</span>' : '') +
               '<div class="muted small"><code>' + esc(r.model || '') + '</code></div>'
             : '<span class="muted">未纳管 · </span><code>' + esc(r.model || '—') + '</code>') +
-            '</td><td>' + esc(sourceText(r.source)) + '</td>' +
+            '</td><td>' + esc(sourceText(r.source)) +
+            (sceneText(r.scene) ? ' <span class="muted small">· ' + sceneText(r.scene) + '</span>' : '') +
+            '</td>' +
           '<td>' + num(r.prompt_tokens) + '</td><td>' + num(r.completion_tokens) + '</td>' +
           '<td>' + num(r.total_tokens) + '</td><td>' + money(r.cost) + '</td>' +
           '<td>' + (r.latency_ms == null ? '—' : num(r.latency_ms) + ' ms') + '</td>' +
@@ -3882,6 +3935,54 @@
   $('btnLlmImport').addEventListener('click', function () {
     api('/api/llm-models/import-config', { method: 'POST', body: {} })
       .then(function (d) { toast(d.message); renderLlmModels(d); }).catch(fail);
+  });
+  /* 大模型配置导出 / 导入。
+     导出文件里带明文 API Key（不带的话导到新机器上不能用），所以导出前明确提醒一次；
+     导入方式由旁边下拉决定：merge=同名覆盖、其余保留；replace=文件里没有的模型会被删掉。 */
+  $('btnLlmExport').addEventListener('click', function () {
+    if (!confirm('导出文件包含 API Key 明文，请妥善保管，不要发到公开群或提交到公开仓库。\n\n确定导出？')) return;
+    window.location.href = '/api/llm-models/export';
+    toast('已开始下载模型配置（含明文密钥）');
+  });
+  $('btnLlmImportFile').addEventListener('click', function () { $('llmImportInput').click(); });
+  $('llmImportInput').addEventListener('change', function () {
+    var f = this.files[0];
+    if (!f) return;
+    var mode = $('llmImportMode').value;
+    if (mode === 'replace' &&
+        !confirm('「全量替换」会删除文件里没有的模型，并把默认模型 / 群聊私聊模型改成文件里的设置。\n\n确定继续？')) {
+      this.value = '';
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function () {
+      var payload;
+      try { payload = JSON.parse(String(fr.result || '')); }
+      catch (e) { toast('「' + f.name + '」不是合法的 JSON 文件', 'err'); return; }
+      api('/api/llm-models/import', { method: 'POST', body: { data: payload, mode: mode } })
+        .then(function (d) {
+          toast(d.message);
+          renderLlmModels(d);
+          var miss = (d.result && d.result.missing) || [];
+          if (miss.length) toast('有引用没生效：' + miss.join('；'), 'warn');
+        }).catch(fail);
+    };
+    fr.onerror = function () { toast('读取文件失败', 'err'); };
+    fr.readAsText(f);
+    this.value = '';
+  });
+  // 分场景模型：群聊 / 私聊一次保存（0 = 跟随全局默认）
+  $('btnLlmSceneSave').addEventListener('click', function () {
+    api('/api/llm-models/scene', { method: 'POST', body: {
+      group: $('llmSceneGroup').value, private: $('llmScenePrivate').value
+    } }).then(function (d) { toast(d.message); renderLlmModels(d); }).catch(fail);
+  });
+  // 群聊 / 私聊配置页各自的「应答模型」保存
+  $('btnGrpModelSave').addEventListener('click', function () {
+    saveSceneModel('group', 'grpSceneModel');
+  });
+  $('btnPrvModelSave').addEventListener('click', function () {
+    saveSceneModel('private', 'prvSceneModel');
   });
 
   // 配置

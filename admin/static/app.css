@@ -533,6 +533,14 @@ input:focus, select:focus, textarea:focus {
 
 /* ---------- 键值列表 ---------- */
 .kv-list { display: flex; flex-direction: column; gap: 1px; }
+/* 分场景模型（群聊 / 私聊）：两列自适应，窄屏自动堆叠，避免下拉框被压扁 */
+.scene-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.scene-item { display: flex; flex-direction: column; gap: 6px; }
+.scene-item > label { font-size: 12.5px; color: var(--text-2); }
+.scene-item > select { width: 100%; }
 /* 手机插件授权状态徽标：已激活用品牌绿，试用 / 未知用琥珀，过期 / 无效用红 */
 .card-pills { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .count-pill.warn { background: #fff2d9; color: #a86a00; }

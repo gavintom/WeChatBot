@@ -1065,12 +1065,15 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
         log.info("插件直接作答，跳过 RAG+LLM | 问=%s", _brief(question))
     else:
         t0 = time.time()
+        # 场景决定用哪个大模型：群聊/私聊可在后台各配一个（留空则跟随全局默认）。
+        scene = m.get("chat_type") if m.get("chat_type") in ("group", "private") else None
         with brain_lock:
             try:
                 ans = BRAIN.answer(question, history=_history(uid),
                                    sources=effective_sources,
                                    system_prompt=match.get("system_prompt"),
-                                   system_prompt_extra=prompt_extra)
+                                   system_prompt_extra=prompt_extra,
+                                   scene=scene)
             except Exception as e:
                 log.exception("brain.answer 异常: %s", e)
                 _fire_error(ctx, e, "brain.answer")
@@ -1079,11 +1082,17 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
             images = list(getattr(BRAIN, "last_images", None) or [])
             attempts = [dict(a) for a in (getattr(BRAIN, "last_attempts", None) or [])]
             # 必须在锁内快照：锁放开后另一个请求可能已经切到别的纳管模型
-            llm_id_used = (getattr(BRAIN, "llm", None) or {}).get("id")
+            llm_used = dict(getattr(BRAIN, "llm", None) or {})
         cost_ms = int((time.time() - t0) * 1000)
         if ans.startswith("AI 服务暂时不可用"):
             images = []
-        store.log_llm_usage(attempts, source="wechat", llm_id=llm_id_used)
+        # 每条回复都记一条「场景 + 模型」：AI 用量页能核对，app.log 也能直接搜。
+        log.info("AI 应答 | 场景=%s | 模型=%s | 纳管id=%s | 来源=%s | 耗时=%dms | 问=%s",
+                 {"group": "群聊", "private": "私聊"}.get(scene or "", "不限"),
+                 llm_used.get("model") or "-", llm_used.get("id") or "-",
+                 llm_used.get("source") or "config.yaml", cost_ms, _brief(question))
+        store.log_llm_usage(attempts, source="wechat", llm_id=llm_used.get("id"),
+                            scene=scene)
 
     if RCFG.get("plain_text", True):
         ans = textutil.strip_markdown(ans)

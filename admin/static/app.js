@@ -3939,10 +3939,12 @@
   /* 大模型配置导出 / 导入。
      导出文件里带明文 API Key（不带的话导到新机器上不能用），所以导出前明确提醒一次；
      导入方式由旁边下拉决定：merge=同名覆盖、其余保留；replace=文件里没有的模型会被删掉。 */
-  $('btnLlmExport').addEventListener('click', function () {
+  // ⚠️ 按钮 id 必须是 btnLlmModelsExport：AI 用量页的「导出 CSV」也叫 btnLlmExport，
+  // 同 id 会让 $() 只拿到第一个元素，模型页按钮静默失效（1.1.2-beta3 的线上 bug）。
+  $('btnLlmModelsExport').addEventListener('click', function () {
     if (!confirm('导出文件包含 API Key 明文，请妥善保管，不要发到公开群或提交到公开仓库。\n\n确定导出？')) return;
-    window.location.href = '/api/llm-models/export';
     toast('已开始下载模型配置（含明文密钥）');
+    window.location.href = '/api/llm-models/export';
   });
   $('btnLlmImportFile').addEventListener('click', function () { $('llmImportInput').click(); });
   $('llmImportInput').addEventListener('change', function () {

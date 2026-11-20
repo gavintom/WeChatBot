@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1f18">
 <title>微信智能客服 · 管理后台 {{ app_version }}</title>
-<link rel="stylesheet" href="/static/app.css?v=20261120beta3">
+<link rel="stylesheet" href="/static/app.css?v=20261120beta4">
 </head>
 <body>
 <!-- 移动端抽屉遮罩：桌面由 CSS 隐藏；点它 / 按 Esc / 切换页面都会收起侧栏 -->
@@ -567,7 +567,7 @@
                 <option value="replace">导入：全量替换</option>
               </select>
               <input type="file" id="llmImportInput" class="hidden" accept=".json,application/json">
-              <button class="btn btn-ghost btn-sm" id="btnLlmExport" title="导出全部模型配置为 JSON（含明文 API Key，可用于换机器 / 备份）">导出配置</button>
+              <button class="btn btn-ghost btn-sm" id="btnLlmModelsExport" title="导出全部模型配置为 JSON（含明文 API Key，可用于换机器 / 备份）">导出配置</button>
               <button class="btn btn-ghost btn-sm" id="btnLlmImportFile" title="从导出的 JSON 文件恢复模型配置">导入配置</button>
               <button class="btn btn-ghost btn-sm" id="btnLlmImport" title="把 config.yaml 里正在用的 external_llm 加进来并设为默认">从当前配置导入</button>
               <button class="btn btn-primary btn-sm" id="btnLlmNew">新增模型</button>
@@ -843,6 +843,6 @@
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/marked.min.js"></script>
 <script src="/static/vendor/purify.min.js"></script>
-<script src="/static/app.js?v=20261120beta3"></script>
+<script src="/static/app.js?v=20261120beta4"></script>
 </body>
 </html>

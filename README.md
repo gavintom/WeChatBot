@@ -5,10 +5,15 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.2-beta3**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2-beta4**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
+
+> **V1.1.2-beta4 更新要点**：修复「AI 大模型」页**点「导出配置」没反应**。
+> beta3 里模型页的导出按钮与「AI 用量」页的「导出 CSV」用了同一个元素 id
+> （`btnLlmExport`），前端按下标取元素只拿到第一个，模型页那个按钮实际没有绑定事件；
+> 现改为独立的 `btnLlmModelsExport`，并在验证脚本里加了「模板内无重复 id」的断言防复发。
 
 > **V1.1.2-beta3 更新要点**：**大模型配置可导出 / 导入**（换机器、多套部署之间搬配置、改前留备份）。
 > 「AI 大模型」页模型列表右上角新增「导出配置」「导入配置」：导出为一份 JSON，

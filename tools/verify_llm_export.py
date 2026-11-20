@@ -24,6 +24,7 @@ _TMP = tempfile.mkdtemp(prefix="wxbot_llm_export_")
 os.environ["WXBOT_DB"] = os.path.join(_TMP, "analytics.db")
 os.environ.setdefault("WXBOT_ADMIN_LOG", os.path.join(_TMP, "admin.log"))
 
+import io  # noqa: E402
 import store  # noqa: E402
 
 PASS = 0
@@ -254,8 +255,24 @@ print("\n=== 10. 页面元素 ===")
 with cl.session_transaction() as s:
     s["uid"] = "admin"
 html = cl.get("/").get_data(as_text=True)
-for el in ("btnLlmExport", "btnLlmImportFile", "llmImportInput", "llmImportMode"):
+for el in ("btnLlmModelsExport", "btnLlmImportFile", "llmImportInput", "llmImportMode"):
     check("页面含 %s" % el, el in html)
+
+# ⚠️ 同 id 会让 $() 只拿到第一个元素，按钮静默失效（1.1.2-beta3 线上踩过：
+# 模型页「导出配置」和用量页「导出 CSV」都叫 btnLlmExport，点导出没反应）。
+import collections as _c
+import re as _re
+_ids = _re.findall(r'\bid="([^"]+)"', html)
+_dup = {k: v for k, v in _c.Counter(_ids).items() if v > 1}
+check("模板内无重复 id", not _dup, _dup)
+_js = io.open("admin/static/app.js", encoding="utf-8").read()
+check("模型页导出按钮有独立绑定",
+      _js.count("$('btnLlmModelsExport')") == 1
+      and _js.count("$('btnLlmExport')") == 1,
+      "models=%d csv=%d" % (_js.count("$('btnLlmModelsExport')"),
+                            _js.count("$('btnLlmExport')")))
+check("模型页导出指向 /api/llm-models/export",
+      "/api/llm-models/export" in _js)
 
 print("\n" + "=" * 46)
 print("通过 %d 项，失败 %d 项" % (PASS, FAIL))

@@ -5,10 +5,23 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.2-beta7**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2-beta8**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
+
+> **V1.1.2-beta8 更新要点**：四项消息链路增强。
+> ① **语音 reply 模式**：`voice.mode=reply` 时不识别、不调大模型，收到语音直接回
+> `fallback_reply` 固定话术（缺失/非法值回退 asr）；`asr` 模式行为不变。
+> ② **图片/视频/文件静默跳过**：本体落媒体库、原始消息进聊天记录库（会话/发送者/
+> 文件/时间对应关系齐全），**不再回「暂不支持」**；配套的 `media_need_trigger` /
+> `unsupported_reply` 废逻辑已清除。
+> ③ **引用消息带图片/文件 → 一并上传大模型**：从 `quoteResolved` 下载被引媒体转
+> data URL，与正文一起发；模型不支持时按 `reply.media_unsupported_reply` 提示，
+> 不发请求不计费。
+> ④ **大模型配置新增多模态能力位与 token 上限**：「AI 大模型」页每个模型可勾
+> 支持图片/支持文件，并设输入 token 上限（超限优先丢最老的多轮历史）；导出/导入
+> 均含这些字段。
 
 > **V1.1.2-beta7 更新要点**：静态资源缓存串**统一由一处管理**。
 > 以前 `index.html` 用 `?v=20261120beta6`、`login.html` / `error.html` 还停在 `?v=20261119`，
@@ -233,9 +246,9 @@ http://<服务器IP>:29999/webhook?token=<webhook.token>     # 未开 token 校�
 | 消息 | 处理 |
 |---|---|
 | 文本 `type=1` | 配置判定 → 检索 + LLM → 回复（群聊自动 @ 提问者） |
-| 引用回复 `type=49` | 同上，并把被引用的原文拼进提问 |
-| 语音 `type=34` | SILK → MP3 → ASR → 按识别文本应答 |
-| 图片 `type=3` / 视频 `type=43` | 命中触发条件才回「暂不支持…」，不做检索 |
+| 引用回复 `type=49` | 同上，并把被引用的原文拼进提问；引用里带图片/文件时，一并下载上传大模型（模型不支持则提示） |
+| 语音 `type=34` | `mode=asr`：SILK → MP3 → ASR → 按识别文本应答；`mode=reply`：直接回 `fallback_reply` 固定话术 |
+| 图片 `type=3` / 视频 `type=43` / 文件 `type=49` | 静默跳过：本体落媒体库、原始消息进聊天记录库，不回话术 |
 | 其他 / 系统消息 | 忽略 |
 | 自己发出的消息 | 忽略，防自问自答死循环 |
 | 公众号 / 服务号 / 文件助手 | webhook 入口直接丢弃，不记录 |

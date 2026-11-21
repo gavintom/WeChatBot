@@ -26,11 +26,11 @@ from admin import cfg
 SECRET_FILE = os.path.join(BASE_DIR, ".admin_secret")
 SESSION_COOKIE = "wxbot_admin_session"
 # 应用版本号：改这里即可，侧栏徽标 / 页面标题 / /api/sysinfo 同步生效
-APP_VERSION = "V1.1.2-beta7"
+APP_VERSION = "V1.1.2-beta8"
 # 静态资源缓存串：所有模板统一用 {{ asset_ver }} 拼在 ?v= 后面（index/login/error）。
 # 以前各模板各写各的（index 用 betaN、login/error 还停在 20261119），改样式只改一处会漏，
 # 浏览器就会拿旧 CSS 配新 HTML。以后发版只改这一行。
-ASSET_VER = "20261121beta7"
+ASSET_VER = "20261121beta8"
 
 
 # ---------------------------------------------------------------- 日志

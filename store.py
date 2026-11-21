@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS llm_models (
     model           TEXT NOT NULL,
     temperature     REAL NOT NULL DEFAULT 0.3,
     stream          INTEGER NOT NULL DEFAULT 1,
-    max_tokens      INTEGER NOT NULL DEFAULT 0,
+    max_tokens      INTEGER NOT NULL DEFAULT 0,       -- 单次生成长度上限（输出）
+    max_input_tokens INTEGER NOT NULL DEFAULT 0,      -- 输入 token 上限（0=不限，brain 拼上下文时截断）
+    support_image   INTEGER NOT NULL DEFAULT 0,       -- 是否支持图片输入（读图）
+    support_file    INTEGER NOT NULL DEFAULT 0,       -- 是否支持文件输入
     connect_timeout INTEGER NOT NULL DEFAULT 10,
     read_timeout    INTEGER NOT NULL DEFAULT 60,
     total_timeout   INTEGER NOT NULL DEFAULT 240,
@@ -686,6 +689,10 @@ def init_db():
                                      # 群管理员标记（插件 v1.2.10-beta11 的 isAdmin），
                                      # 用于显示「管理员」并判断能否改成员备注
                                      ("is_admin", "INTEGER NOT NULL DEFAULT 0")],
+                # 1.1.2-beta8：模型多模态能力位 + 输入 token 上限（老库保持保守默认 0）
+                "llm_models": [("max_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                               ("support_image", "INTEGER NOT NULL DEFAULT 0"),
+                               ("support_file", "INTEGER NOT NULL DEFAULT 0")],
             }
             for _t, _add in _migrations.items():
                 _cols = {r["name"] for r in conn.execute("PRAGMA table_info(%s)" % _t)}
@@ -1884,6 +1891,10 @@ def list_llm_models():
         d["api_key_masked"] = _mask_key(d.pop("api_key", ""))
         d["enabled"] = bool(d["enabled"])
         d["stream"] = bool(d["stream"])
+        # 迁移后老库这些列可能是 NULL，前端按布尔用；统一归一化
+        for k in ("support_image", "support_file"):
+            d[k] = bool(d.get(k))
+        d["max_input_tokens"] = int(d.get("max_input_tokens") or 0)
         out.append(d)
     return out
 
@@ -2015,6 +2026,9 @@ def _norm_llm_payload(data):
         "temperature": temp,
         "stream": bool(d.get("stream", True)),
         "max_tokens": _int(d.get("max_tokens"), 0, 0, 200000),
+        "max_input_tokens": _int(d.get("max_input_tokens"), 0, 0, 2000000),
+        "support_image": bool(d.get("support_image", False)),
+        "support_file": bool(d.get("support_file", False)),
         "connect_timeout": _int(d.get("connect_timeout"), 10, 1, 300),
         "read_timeout": _int(d.get("read_timeout"), 60, 1, 3600),
         "total_timeout": _int(d.get("total_timeout"), 240, 1, 7200),
@@ -2043,18 +2057,22 @@ def save_llm_model(data):
     api_key = p["api_key"] or (old["api_key"] if old else "")
     vals = (p["name"], p["provider"], p["base_url"], api_key, p["model"],
             p["temperature"], 1 if p["stream"] else 0,
-            p["max_tokens"], p["connect_timeout"], p["read_timeout"],
+            p["max_tokens"], p["max_input_tokens"],
+            1 if p["support_image"] else 0, 1 if p["support_file"] else 0,
+            p["connect_timeout"], p["read_timeout"],
             p["total_timeout"], 1 if p["enabled"] else 0)
     now = time.time()
     if old:
         _write("UPDATE llm_models SET name=?,provider=?,base_url=?,api_key=?,model=?,"
-               "temperature=?,stream=?,max_tokens=?,connect_timeout=?,read_timeout=?,"
+               "temperature=?,stream=?,max_tokens=?,max_input_tokens=?,support_image=?,"
+               "support_file=?,connect_timeout=?,read_timeout=?,"
                "total_timeout=?,enabled=?,updated_at=? WHERE id=?", vals + (now, int(mid)))
         return int(mid)
     return int(_write(
         "INSERT INTO llm_models(name,provider,base_url,api_key,model,temperature,stream,"
-        "max_tokens,connect_timeout,read_timeout,total_timeout,enabled,created_at,updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now)))
+        "max_tokens,max_input_tokens,support_image,support_file,"
+        "connect_timeout,read_timeout,total_timeout,enabled,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals + (now, now)))
 
 
 def delete_llm_model(mid):
@@ -2083,6 +2101,9 @@ def _llm_row_to_cfg(row, source):
         "model": row["model"], "temperature": row["temperature"],
         "stream": bool(row["stream"]),
         "max_tokens": int(row["max_tokens"] or 0),
+        "max_input_tokens": int(row["max_input_tokens"] or 0) if "max_input_tokens" in row.keys() else 0,
+        "support_image": bool(row["support_image"]) if "support_image" in row.keys() else False,
+        "support_file": bool(row["support_file"]) if "support_file" in row.keys() else False,
         "connect_timeout": int(row["connect_timeout"] or 10),
         "read_timeout": int(row["read_timeout"] or 60),
         "total_timeout": int(row["total_timeout"] or 240),
@@ -2204,6 +2225,9 @@ def export_llm_models(with_secrets=True):
             "temperature": r["temperature"],
             "stream": bool(r["stream"]),
             "max_tokens": int(r["max_tokens"] or 0),
+            "max_input_tokens": int(r["max_input_tokens"] or 0),
+            "support_image": bool(r["support_image"]),
+            "support_file": bool(r["support_file"]),
             "connect_timeout": int(r["connect_timeout"] or 10),
             "read_timeout": int(r["read_timeout"] or 60),
             "total_timeout": int(r["total_timeout"] or 240),

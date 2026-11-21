@@ -1179,6 +1179,104 @@ class HybridRAGBrain(Brain):
         return {"Authorization": f"Bearer {self.llm['api_key']}",
                 "Content-Type": "application/json"}
 
+    def _cap(self, key, default):
+        """读模型能力/上限配置：本次 llm（纳管模型注入）> external_llm 兜底 > 默认值。
+
+        纳管模型经 _llm_row_to_cfg 把 support_image/support_file/max_input_tokens
+        放进 self.llm；config.yaml 部署没纳管时，这些键可写在 brain.external_llm 段。
+        """
+        v = self.llm.get(key)
+        if v is None:
+            ext = self.cfg.get("external_llm") or {}
+            v = ext.get(key)
+        return default if v is None else v
+
+    @staticmethod
+    def _estimate_tokens(text):
+        """粗估文本 token 数：中文/全角约 1 字 1 token，其余约 4 字符 1 token。
+
+        只用于本地截断上下文，不追求与上游分词器一致；宁可略放宽，也不要把
+        有效上下文砍掉。真正的精确计数在上游 usage 里。
+        """
+        if not text:
+            return 0
+        n_cjk = sum(1 for ch in text if ord(ch) > 0x2E80)
+        other = len(text) - n_cjk
+        return n_cjk + other // 4
+
+    def _trim_messages(self, messages, max_input_tokens):
+        """按输入 token 上限裁剪：保 system 与当前 user（含知识库），丢最老的历史。
+
+        max_input_tokens<=0 表示不限，原样返回。优先牺牲多轮历史，绝不砍当前
+        问题的知识库上下文——那正是回答依据。返回 (裁剪后的 messages, 是否裁剪)。
+        """
+        cap = int(max_input_tokens or 0)
+        if cap <= 0 or not messages:
+            return messages, False
+        total = sum(self._estimate_tokens(str(m.get("content") or "")) for m in messages)
+        if total <= cap:
+            return messages, False
+        # messages 结构：[system, 历史 user/assistant ..., 当前 user]
+        system, current = messages[0], messages[-1]
+        core = self._estimate_tokens(str(system.get("content") or "")) + \
+               self._estimate_tokens(str(current.get("content") or ""))
+        kept = list(messages[1:-1])       # 历史，按时间从旧到新
+        trimmed = False
+        while kept and core > 0 and total > cap:
+            drop = kept.pop(0)            # 先丢最老的
+            total -= self._estimate_tokens(str(drop.get("content") or ""))
+            trimmed = True
+        # 历史全丢完还超（system+当前问题本身就太长）：截断当前 user 的知识库段，
+        # 保留「用户问题」结尾，避免把真正的问题砍掉。
+        # 当前 user 是多模态数组（带图片/文件）时不做字符截断——会破坏 content 结构；
+        # 这种极端情况交给上游按 token 上限处理（多数网关会自己截断或报错）。
+        if total > cap and len(messages) >= 2 and isinstance(current.get("content"), str):
+            cur = str(current.get("content") or "")
+            cut = max(0, total - cap)
+            # 按估算比例折算成字符数，从头部（知识库段）砍
+            chars = min(len(cur), int(cut * 2) + 32)
+            current = dict(current)
+            current["content"] = "…（上下文已截断）\n" + cur[chars:]
+            trimmed = True
+            return [system, current], trimmed
+        return [system] + kept + [current], trimmed
+
+    @staticmethod
+    def _media_content(user_text, attachments, support_image, support_file):
+        """把正文 + 附件组装成 OpenAI 多模态 content。
+
+        返回 (content, used_kinds)；content 为字符串（无可用附件）或
+        [{"type":"text",...},{"type":"image_url",...},...] 数组。
+        """
+        items = list(attachments or [])
+        # 只保留本次模型声明支持的种类；不支持的种类在此被滤掉（提示由调用方决定）
+        usable = [a for a in items
+                  if (a.get("kind") == "image" and support_image) or
+                     (a.get("kind") == "file" and support_file)]
+        if not usable:
+            return user_text, []
+        content = [{"type": "text", "text": user_text}]
+        used = []
+        for a in usable:
+            data_url = a.get("data_url") or ""
+            if not data_url:
+                continue
+            if a.get("kind") == "image":
+                content.append({"type": "image_url",
+                                "image_url": {"url": data_url}})
+                used.append("image")
+            else:
+                # 文件走 OpenAI 风格 file content：优先 data URL，附文件名便于模型理解
+                part = {"type": "file",
+                        "file": {"file_data": data_url}}
+                if a.get("name"):
+                    part["file"]["filename"] = a["name"]
+                content.append(part)
+                used.append("file")
+        if not used:
+            return user_text, []
+        return content, used
+
     def _payload(self, messages, stream):
         p = {
             "model": self.llm["model"],
@@ -1429,7 +1527,7 @@ class HybridRAGBrain(Brain):
         return body
 
     def answer(self, q, history=None, sources=None, system_prompt=None,
-               system_prompt_extra=None, model=None, scene=None):
+               system_prompt_extra=None, model=None, scene=None, attachments=None):
         """对外唯一入口：生成答案 → 摘出图片标记 → 返回 (纯文字)。
 
         model：可选，本次调用「特别指定」的大模型（名称 / 上游模型 ID）。
@@ -1441,7 +1539,11 @@ class HybridRAGBrain(Brain):
         sources：知识库文档名列表（策略过滤）。None=全库；[]=空策略不检索。
         system_prompt：本次请求专属提示词（群聊/私聊策略）；为空则沿用
         config.yaml 的 brain.system_prompt，再为空才用内置默认提示词。
-        拆成两个方法的理由：_generate 里有三处兜底分支（流式/非流式/已收片段），
+        attachments：随消息附带的多模态资料 list[dict]，每项
+          {"kind": "image"|"file", "name": 文件名, "data_url": "data:...;base64,..."}。
+          仅当本次生效模型声明支持对应能力时才随正文一起发给上游；
+          不支持时返回 media_unsupported_reply 提示（不发起请求、不计费）。
+          拆成两个方法的理由：_generate 里有三处兜底分支（流式/非流式/已收片段），
         每处都要走一遍「摘标记」，与其在三个 return 上各写一遍，
         不如让 _generate 只管返回原文，标记处理集中在这里做一次。
         """
@@ -1453,7 +1555,8 @@ class HybridRAGBrain(Brain):
             text, cands, icfg = self._generate(q, history=history, sources=sources,
                                                system_prompt=system_prompt,
                                                system_prompt_extra=system_prompt_extra,
-                                               scene=self.scene)
+                                               scene=self.scene,
+                                               attachments=attachments)
         finally:
             # 无论成功失败都要清掉，否则下一次普通调用会误用上一次的指定模型 / 场景
             self.model_override = None
@@ -1564,10 +1667,11 @@ class HybridRAGBrain(Brain):
         raise RuntimeError("内置大模型没有返回内容")
 
     def _generate(self, q, history=None, sources=None, system_prompt=None,
-                  system_prompt_extra=None, scene=None):
+                  system_prompt_extra=None, scene=None, attachments=None):
         """只负责检索 + 生成原文。返回 (文本, 候选图列表, 图片配置)。
 
         scene：本次场景（group / private），用于选模型；None 表示不区分场景。
+        attachments：随消息附带的多模态资料（见 answer 的说明）。
         """
         # 每次生成前重新解析生效模型：后台切换默认模型 / 场景模型立即生效。
         # 解析不到（没设默认 / DB 异常）就明确回退 config.yaml，不能残留上一次的默认模型。
@@ -1578,6 +1682,30 @@ class HybridRAGBrain(Brain):
                  {"group": "群聊", "private": "私聊"}.get(scene or "", scene or "不限"),
                  self.llm.get("model") or "-", self.llm.get("id") or "-",
                  self.llm.get("source") or "config.yaml")
+
+        icfg = self._img_cfg()
+        # —— 多模态能力门禁：附件里有模型不支持的种类，直接回提示，不请求、不计费 ——
+        # 能力位来自管理端模型配置（_llm_row_to_cfg 注入），config.yaml 的 external_llm
+        # 作为兜底；默认 False（保守），没勾「支持」的模型一律当不支持。
+        if attachments:
+            support_image = bool(self._cap("support_image", False))
+            support_file = bool(self._cap("support_file", False))
+            need_image = any(a.get("kind") == "image" for a in attachments)
+            need_file = any(a.get("kind") == "file" for a in attachments)
+            if (need_image and not support_image) or (need_file and not support_file):
+                kinds = "+".join((["图片"] if need_image else []) +
+                                 (["文件"] if need_file else []))
+                # 提示文案在 config.yaml 的 reply 段；webhook 层也会传 media_tip，
+                # 这里直接读全局 cfg 的 reply 段，保证 kbapi 等其它调用方也有一致文案。
+                reply_cfg = self.cfg.get("reply") or {}
+                tip = str(reply_cfg.get("media_unsupported_reply") or
+                          "这条消息里带了图片/文件，我这边的大模型暂时看不了，麻烦直接文字说明～")
+                self.log("多模态能力不足 | 附件=%s | 图片=%s 文件=%s | 直接回提示",
+                         kinds, support_image, support_file)
+                self.last_attempts = []
+                self.last_images = []
+                return tip, [], icfg
+
         # 本次 answer() 里的**所有** LLM 调用记录（每次尝试一条），供 app.py 埋点。
         # 为什么要多条：流式失败会自动重试非流式，这两次调用**都真的花了钱**。
         # 只记最后一次的话，重试频繁时账目会明显偏低（漏掉流式那次的消耗）。
@@ -1585,7 +1713,6 @@ class HybridRAGBrain(Brain):
         self.last_attempts = []
         self.last_images = []
         top_k = int(self.retrieval.get("top_k", 4))
-        icfg = self._img_cfg()
         want_imgs = bool(icfg["enabled"]) and icfg["max_images"] > 0 \
             and bool(getattr(self.retriever, "images", None))
         try:
@@ -1622,6 +1749,22 @@ class HybridRAGBrain(Brain):
                         and isinstance(m.get("content"), str) and m["content"].strip():
                     messages.append({"role": m["role"], "content": m["content"]})
         messages.append({"role": "user", "content": user})
+        # —— 多模态：把支持的附件拼进当前 user 消息的 content（OpenAI 风格数组）——
+        if attachments:
+            support_image = bool(self._cap("support_image", False))
+            support_file = bool(self._cap("support_file", False))
+            content, used = self._media_content(user, attachments,
+                                                support_image, support_file)
+            if used:
+                messages[-1]["content"] = content
+                self.log("多模态请求 | 附件类型=%s | 计数=%d", "+".join(used), len(used))
+        # —— 输入 token 上限：超限则丢最老的历史，保 system 与当前问题 ——
+        max_in = self._cap("max_input_tokens", 0)
+        messages, trimmed = self._trim_messages(messages, max_in)
+        if trimmed:
+            kinds = [m["role"] for m in messages]
+            self.log("输入 token 超限已裁剪 | 上限=%s | 剩余角色序=%s",
+                     max_in, "→".join(kinds))
         # —— 发送日志：只打**汇总**（条数 + 角色序）——
         # 刻意不打历史明细：那是**客户对话原文**，每轮都打会把 app.log 灌满，
         # 而且排查时看汇总就够 —— "历史 0 条" 就能判断多轮记忆有没有生效。

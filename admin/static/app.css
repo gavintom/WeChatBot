@@ -772,7 +772,7 @@ input:focus, select:focus, textarea:focus {
 .tbl-records th:nth-child(11), .tbl-records td:nth-child(11) { width: 3%; }
 .tbl-records .cell-q, .tbl-records .cell-a { white-space: normal; word-break: break-all; overflow-wrap: anywhere; }
 /* AI 大模型「模型列表」：一条模型一行，列不换行，超出靠水平滚动条 */
-#llmModelListTable { min-width: 1150px; }
+#llmModelListTable { min-width: 1280px; }
 #llmModelListTable th, #llmModelListTable td { white-space: nowrap; }
 /* AI 用量「模型库 · 用量对照」：一条模型一行，列不换行，超出靠水平滚动条 */
 #llmCompareTable { min-width: 1250px; }

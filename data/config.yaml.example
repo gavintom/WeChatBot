@@ -58,6 +58,10 @@ brain:
     read_timeout: 60
     total_timeout: 240
     max_tokens: 0
+    # 多模态与上下文（也可在管理端「AI 大模型」页按模型单独配置，优先级更高）
+    max_input_tokens: 0           # 输入 token 上限，0=不限；超限优先丢最老的多轮历史
+    support_image: false          # 该模型是否支持读图（引用消息带图片时才会用到）
+    support_file: false           # 该模型是否支持读文件
     partial_min_chars: 20
     stream_usage: true
     retries: 2                           # LLM 请求失败后再试 2 次（共 3 次）

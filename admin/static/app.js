@@ -975,6 +975,17 @@
   function loadLlmModels() {
     return api('/api/llm-models').then(function (d) { renderLlmModels(d); }).catch(fail);
   }
+  /* 多模态能力单元格：图片/文件支持 + 输入 token 上限，一眼看清模型能否读图读文件 */
+  function multiModalCell(x) {
+    var bits = [];
+    if (x.support_image) bits.push('<span class="chip">图</span>');
+    if (x.support_file) bits.push('<span class="chip">文件</span>');
+    if (!bits.length) bits.push('<span class="muted">纯文本</span>');
+    var cap = Number(x.max_input_tokens || 0);
+    if (cap > 0) bits.push('<span class="muted">限 ' + cap + ' tok</span>');
+    return bits.join(' ');
+  }
+
   function renderLlmModels(d) {
     var items = d.items || [], defId = d.default_id || 0, eff = d.effective || {};
     $('llmCount').textContent = items.length;
@@ -995,11 +1006,12 @@
         '<td><code>' + esc(x.model) + '</code></td>' +
         '<td>' + esc(x.base_url) + '</td>' +
         '<td>' + esc(x.api_key_masked || '—') + '</td>' +
+        '<td>' + multiModalCell(x) + '</td>' +
         '<td>' + tag(x.enabled, '启用', '停用') + '</td>' +
         '<td>' + (x.id === defId ? '<span class="chip">默认</span>' : '') + '</td>' +
         '<td><button class="btn btn-ghost btn-sm" data-llmedit="' + x.id + '">编辑</button> ' +
         '<button class="btn btn-warn btn-sm" data-llmdel="' + x.id + '">删除</button></td></tr>';
-    }).join('') : emptyRow(8, '还没有纳管模型，点「新增模型」或「从当前配置导入」');
+    }).join('') : emptyRow(9, '还没有纳管模型，点「新增模型」或「从当前配置导入」');
     $$('[data-llmedit]').forEach(function (b) {
       b.addEventListener('click', function () {
         var row = items.filter(function (x) { return String(x.id) === b.dataset.llmedit; })[0];
@@ -1050,9 +1062,19 @@
       { key: 'model', label: '模型 ID', placeholder: 'deepseek-chat' },
       { key: 'temperature', label: 'temperature（0~2）', type: 'number' },
       { key: 'stream', label: '流式', type: 'checkbox', checkLabel: '启用流式（推荐）' },
+      { key: 'max_tokens', label: '输出 token 上限', type: 'number',
+        placeholder: '0 = 不限', help: '限制单次回答长度；0 表示由模型自己决定' },
+      { key: 'max_input_tokens', label: '输入 token 上限', type: 'number',
+        placeholder: '0 = 不限', help: '超过时优先丢弃最早的多轮对话历史；0 表示不裁剪' },
+      { key: 'support_image', label: '多模态·图片', type: 'checkbox',
+        checkLabel: '支持读图（引用消息带图片时可一并上传）' },
+      { key: 'support_file', label: '多模态·文件', type: 'checkbox',
+        checkLabel: '支持读文件（引用消息带文件时可一并上传）' },
       { key: 'enabled', label: '启用', type: 'checkbox', checkLabel: '启用该模型' }
     ];
-    var v = row || { temperature: 0.3, stream: true, enabled: true };
+    var v = row || { temperature: 0.3, stream: true, enabled: true,
+                     max_tokens: 0, max_input_tokens: 0,
+                     support_image: false, support_file: false };
     openForm(editing ? '编辑大模型' : '新增大模型', fields, v, function (data) {
       if (editing) data.id = row.id;
       return api('/api/llm-models', { method: 'POST', body: data }).then(function (d) {

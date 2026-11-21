@@ -1218,11 +1218,9 @@ class HybridRAGBrain(Brain):
             return messages, False
         # messages 结构：[system, 历史 user/assistant ..., 当前 user]
         system, current = messages[0], messages[-1]
-        core = self._estimate_tokens(str(system.get("content") or "")) + \
-               self._estimate_tokens(str(current.get("content") or ""))
         kept = list(messages[1:-1])       # 历史，按时间从旧到新
         trimmed = False
-        while kept and core > 0 and total > cap:
+        while kept and total > cap:
             drop = kept.pop(0)            # 先丢最老的
             total -= self._estimate_tokens(str(drop.get("content") or ""))
             trimmed = True
@@ -1684,12 +1682,13 @@ class HybridRAGBrain(Brain):
                  self.llm.get("source") or "config.yaml")
 
         icfg = self._img_cfg()
-        # —— 多模态能力门禁：附件里有模型不支持的种类，直接回提示，不请求、不计费 ——
         # 能力位来自管理端模型配置（_llm_row_to_cfg 注入），config.yaml 的 external_llm
         # 作为兜底；默认 False（保守），没勾「支持」的模型一律当不支持。
+        # 门禁与 content 组装共用这一份快照（中间 self.llm 不变）。
+        support_image = bool(self._cap("support_image", False))
+        support_file = bool(self._cap("support_file", False))
+        # —— 多模态能力门禁：附件里有模型不支持的种类，直接回提示，不请求、不计费 ——
         if attachments:
-            support_image = bool(self._cap("support_image", False))
-            support_file = bool(self._cap("support_file", False))
             need_image = any(a.get("kind") == "image" for a in attachments)
             need_file = any(a.get("kind") == "file" for a in attachments)
             if (need_image and not support_image) or (need_file and not support_file):
@@ -1750,9 +1749,8 @@ class HybridRAGBrain(Brain):
                     messages.append({"role": m["role"], "content": m["content"]})
         messages.append({"role": "user", "content": user})
         # —— 多模态：把支持的附件拼进当前 user 消息的 content（OpenAI 风格数组）——
+        # 能走到这里说明门禁已放行（所需种类都支持），不支持的种类由 _media_content 过滤。
         if attachments:
-            support_image = bool(self._cap("support_image", False))
-            support_file = bool(self._cap("support_file", False))
             content, used = self._media_content(user, attachments,
                                                 support_image, support_file)
             if used:

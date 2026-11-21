@@ -19,11 +19,13 @@
   · 自己发出的消息（outgoing / direction=out）→ 忽略，防自问自答
 """
 import atexit
+import base64
 import contextvars
 import hmac
 import json
 import logging
 import logging.handlers
+import mimetypes
 import os
 import re
 import sys
@@ -965,6 +967,61 @@ def _stage_media(m):
             log.warning("引用图片存储异常（已忽略）: %s", e)
 
 
+def _quote_attachments(m):
+    """从引用消息的 quoteResolved 下载被引用的图片/文件，构建多模态附件。
+
+    只处理「本条是引用消息且插件给了可用的 quoteResolved」——它带 localID /
+    mediaApi / quoteType，是唯一可靠的下载地址来源（不回查历史）。
+
+    返回 list[{kind, name, data_url}]；下载失败 / 无引用 / 无地址一律返回空，
+    绝不影响主链路（图片本体已由 _stage_media 落库，原始消息已由 chatlog 归档）。
+    """
+    if str(m.get("app_type") or "").lower() != "quote":
+        return []
+    qr = m.get("quote_resolved") or {}
+    if not isinstance(qr, dict) or not qr.get("found"):
+        return []
+    local_id = int(qr.get("localID") or 0)
+    if not local_id:
+        return []
+    chat = m.get("chat")
+    try:
+        qtype = int(qr.get("quoteType") or (m.get("quote") or {}).get("type") or 0)
+    except (TypeError, ValueError):
+        qtype = 0
+
+    # 图片：优先普通档位地址（剥掉 hd=1），复用 media 接口；文件走 file 接口
+    def _to_data_url(raw, ext, fallback_mime):
+        mime = mimetypes.guess_type("x." + str(ext or ""))[0] or fallback_mime
+        b64 = base64.b64encode(raw).decode("ascii")
+        return "data:%s;base64,%s" % (mime, b64)
+
+    out = []
+    try:
+        if qtype == 3:                       # 被引用的是图片
+            api = str(qr.get("mediaApi") or "")
+            # 普通档位：去掉 hd=1 参数（HD 地址常需额外鉴权，且体积更大）
+            api = re.sub(r"([?&])hd=1&?", lambda mm: mm.group(1) if mm.group(1) == "&" else "", api)
+            raw, ext = WX.media(api or m.get("media_api"), chat, local_id)
+            if raw:
+                out.append({"kind": "image", "name": "quote_image." + (ext or "jpg"),
+                            "data_url": _to_data_url(raw, ext, "image/jpeg")})
+        elif qtype == 49:                    # 被引用的是文件（appmsg）
+            raw, ext = WX.file(chat, local_id)
+            if raw:
+                quote = m.get("quote") or {}
+                name = str(qr.get("fileName") or quote.get("title") or
+                           ("quote_file." + (ext or "bin")))
+                out.append({"kind": "file", "name": name,
+                            "data_url": _to_data_url(raw, ext, "application/octet-stream")})
+        else:
+            return []
+    except Exception as e:
+        log.warning("引用媒体下载失败（忽略，不上传附件）: %s", e)
+        return []
+    return out
+
+
 def _voice_mode():
     """归一化语音处理模式：asr=识别后智能应答（默认）；reply=只回固定话术。
 
@@ -1071,6 +1128,12 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
         log.info("插件直接作答，跳过 RAG+LLM | 问=%s", _brief(question))
     else:
         t0 = time.time()
+        # 引用消息里带的图片/文件：下载成附件，随正文一起交给大模型（下载在锁外，
+        # 不占 brain_lock）。当前消息本体是图片/文件时已在类型分支静默跳过，不会走到这。
+        atts = _quote_attachments(m)
+        if atts:
+            log.info("引用媒体附件 | 数量=%d | 类型=%s",
+                     len(atts), "+".join(a["kind"] for a in atts))
         # 用哪个大模型：**本条群/私聊配置**里选的优先（规则级），没选才走
         # 场景默认（群聊/私聊整体）→ 全局默认 → config.yaml。
         # scene 仍然传，作为规则没指定时的兜底。
@@ -1082,7 +1145,8 @@ def _generate(m, ctx, uid, question, effective_sources, prompt_extra, match):
                                    sources=effective_sources,
                                    system_prompt=match.get("system_prompt"),
                                    system_prompt_extra=prompt_extra,
-                                   model=rule_llm, scene=scene)
+                                   model=rule_llm, scene=scene,
+                                   attachments=atts)
             except Exception as e:
                 log.exception("brain.answer 异常: %s", e)
                 _fire_error(ctx, e, "brain.answer")

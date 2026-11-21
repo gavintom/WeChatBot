@@ -15,7 +15,7 @@
     → 文本·引用回复·语音(ASR) 交给 brain 混合检索 + LLM
     → 只检索该策略包含的知识库文档 → POST /api/send/text 回微信
   · 语音 voice.mode=reply → 不识别，直接回 fallback_reply 固定话术
-  · 图片/视频 → 直接回「暂不支持」
+  · 图片/视频/文件 → 静默跳过：本体落媒体库 + 原始消息进聊天记录库，不回话术
   · 自己发出的消息（outgoing / direction=out）→ 忽略，防自问自答
 """
 import atexit
@@ -987,20 +987,15 @@ def _stage_asr(m):
 
 
 def _stage_kind_branch(m, match, kind, asr_failed):
-    """按消息类型直接答复的分支：图片/视频、其它类型、语音识别失败。
+    """按消息类型早退的分支：媒体消息静默跳过、其它类型、语音识别失败。
 
-    返回 True 表示已经给出了答复（或明确跳过），无需再检索知识库。
+    返回 True 表示这条消息已经消费掉（静默跳过或已回复），无需再检索知识库。
     """
-    # 图片 / 视频：直接回「暂不支持」，不做知识检索
+    # 图片 / 视频：静默跳过，不回任何话术。图片本体已由 _stage_media 落盘，
+    # 原始消息已由 chatlog 归档（会话/发送者/文件/时间对应关系都在），
+    # 只留存不打扰——用户明确要求不要「暂不支持」这类提示。
     if kind in ("image", "video"):
-        reply = str(RCFG.get("unsupported_reply") or
-                    "暂不支持图片/视频消息，请发送文字或语音～")
-        try:
-            _send_text(m, match, reply)
-            log.debug("媒体类型暂不支持 | 已回提示 | %s | %s",
-                      m.get("chat_name") or m.get("chat"), kind)
-        except Exception as e:
-            log.warning("回复「暂不支持」失败: %s", e)
+        _skip(m, match, "媒体消息仅落库不回复 | kind=%s" % kind)
         return True
 
     if kind == "other":
@@ -1191,18 +1186,14 @@ def _handle_message(m, ctx=None):
             return
         asr_text, asr_failed = _stage_asr(m)
 
-    # 图片/视频默认也要满足触发条件（避免群里每张图都回一句）；媒体消息本身
-    # 不带正文 / @，true 时实际主要靠「对话延续窗口」放行。
-    # reply.media_need_trigger=false 时改为无条件回复「暂不支持」。
-    ignore_trigger = (kind in ("image", "video") and
-                      not RCFG.get("media_need_trigger", True))
     # H2：策略判定之前。插件可以改 m["text"]（非语音场景）影响唤醒词匹配。
     if _hook(ctx, "on_pre_resolve", kind=kind):
         _plugin_takeover_event(m, ctx)
         return
+    # 图片/视频走正常策略判定即可：命中触发才进类型分支（那里静默跳过），
+    # 没命中则在下方 handled=False 直接 _skip——两种情况都不回话术。
     result = policy.resolve(m, self_wxid(),
-                            text_override=asr_text if kind == "voice" else None,
-                            ignore_trigger=ignore_trigger)
+                            text_override=asr_text if kind == "voice" else None)
     if not result["handled"]:
         _skip(m, result, result["reason"])
         return

@@ -262,11 +262,8 @@ def basic_allowed(m, self_wxid=""):
     return True, ""
 
 
-def resolve(m, self_wxid="", text_override=None, ignore_trigger=False):
+def resolve(m, self_wxid="", text_override=None):
     """核心判定。text_override 用于语音：ASR 识别出的文本参与唤醒词匹配。
-
-    ignore_trigger=True 用于「图片/视频无条件回暂不支持」的可选模式：
-    跳过 @ / 唤醒词要求，但仍严格执行群配置、白名单、黑名单与知识库策略。
 
     返回 dict：handled / reason / sources / policy_* / trigger / question ...
     """
@@ -288,9 +285,6 @@ def resolve(m, self_wxid="", text_override=None, ignore_trigger=False):
                      quoted_self_message(m, self_wxid))
         if at or hit or quoted_me:
             trigger = at or (("wake:%s" % word) if hit else "quote:self")
-        elif ignore_trigger:
-            # 图片/视频「无条件提示」模式本来就要回，不必再查延续窗口
-            trigger = "media"
         else:
             # 机器人刚在这个群回复过、且在窗口内的同一群友：视为对话继续，
             # 不需要再 @ / 唤醒。窗口的开关、时长见 followup.config()；
@@ -315,22 +309,17 @@ def resolve(m, self_wxid="", text_override=None, ignore_trigger=False):
 
     candidates = []
     default_rule = None
-    if ignore_trigger:
-        # 媒体消息无条件提示：所有启用规则都算候选，兜底规则（无唤醒词）优先
-        candidates = [(r, "media", "", text) for r in rules]
-        candidates.sort(key=lambda x: 0 if not x[0].get("wake_words") else 1)
-    else:
-        for r in rules:
-            words = r.get("wake_words") or []
-            if not words:
-                if default_rule is None:
-                    default_rule = r          # 唤醒词留空 = 兜底规则，放最后匹配
-                continue
-            hit, word, q = match_wake_word(text, words)
-            if hit:
-                candidates.append((r, "wake:%s" % word, word, q))
-        if default_rule is not None:
-            candidates.append((default_rule, "default", "", text))
+    for r in rules:
+        words = r.get("wake_words") or []
+        if not words:
+            if default_rule is None:
+                default_rule = r          # 唤醒词留空 = 兜底规则，放最后匹配
+            continue
+        hit, word, q = match_wake_word(text, words)
+        if hit:
+            candidates.append((r, "wake:%s" % word, word, q))
+    if default_rule is not None:
+        candidates.append((default_rule, "default", "", text))
     if not candidates and quoted_self_message(m, self_wxid):
         # 引用了本机发出的消息：免唤醒词，优先用兜底规则，否则用第一条启用规则
         r = next((x for x in rules if not x.get("wake_words")), rules[0])

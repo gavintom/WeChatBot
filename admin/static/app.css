@@ -905,11 +905,17 @@ code { word-break: break-all; }
 .media-quality-ok   { background: var(--green-soft); color: var(--green); }
 /* 媒体明细表：列多且含 ID，给最小宽度让外层 .table-wrap 水平滑动 */
 .media-table-wrap { overflow-x: auto; }
-.media-table { min-width: 1180px; }
+.media-table { min-width: 1250px; }
 .media-table .media-cell-wide { min-width: 180px; max-width: 300px; }
 /* 场景列（群聊/私聊）与大小列适当加宽，避免内容挤在一起 */
 .media-table .media-scene-cell { min-width: 92px; white-space: nowrap; }
 .media-table .media-size-cell { min-width: 108px; white-space: nowrap; }
+.media-table .media-local-id-cell { min-width: 78px; white-space: nowrap; }
+.media-local-id {
+  display: inline-block; padding: 0 5px; border-radius: 3px;
+  font-variant-numeric: tabular-nums; font-size: 12px;
+  color: var(--text-2, #666); background: var(--bg-soft, rgba(0,0,0,.04));
+}
 .media-quote-badge {
   display: inline-block; margin-left: 4px; padding: 0 4px;
   font-size: 10px; line-height: 16px; border-radius: 3px;

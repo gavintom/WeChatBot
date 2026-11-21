@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS media_items (
     width          INTEGER NOT NULL DEFAULT 0,
     height         INTEGER NOT NULL DEFAULT 0,
     sent_at        REAL NOT NULL DEFAULT 0,       -- 消息发送时间（引用图=引用消息发送时间）
-    via            TEXT NOT NULL DEFAULT 'direct' -- direct 直接消息 / quote 引用消息带图
+    via            TEXT NOT NULL DEFAULT 'direct', -- direct 直接消息 / quote 引用消息带图
+    local_id       INTEGER NOT NULL DEFAULT 0      -- 微信 localID：直发=本体消息 / 引用图=被引用图片
 );
 CREATE INDEX IF NOT EXISTS idx_media_time ON media_items(downloaded_at);
 CREATE INDEX IF NOT EXISTS idx_media_chat ON media_items(chat, wxid, downloaded_at);
@@ -138,7 +139,8 @@ def _ensure(conn):
                       ("width", "INTEGER NOT NULL DEFAULT 0"),
                       ("height", "INTEGER NOT NULL DEFAULT 0"),
                       ("sent_at", "REAL NOT NULL DEFAULT 0"),
-                      ("via", "TEXT NOT NULL DEFAULT 'direct'")):
+                      ("via", "TEXT NOT NULL DEFAULT 'direct'"),
+                      ("local_id", "INTEGER NOT NULL DEFAULT 0")):
         if name not in cols:
             try:
                 conn.execute("ALTER TABLE media_items ADD COLUMN %s %s" % (name, ddl))
@@ -369,6 +371,8 @@ def ingest(m, wx, log=None, override=None):
         # 发送时间：普通媒体用消息 ts；引用图片由 override 改成引用消息的 ts
         "sent_at": float(m.get("ts") or 0),
         "via": "direct",
+        # 微信 localID：直发媒体=本体消息；引用图=被引用图片（由 img_msg 传入）
+        "local_id": int(local_id or 0),
     }
     # 引用图片的覆盖字段：发送者 / 显示名 / 时间 / 文件名 / 来源
     for k in ("wxid", "sender_name", "orig_name", "sent_at", "via"):
@@ -383,10 +387,10 @@ def ingest(m, wx, log=None, override=None):
                 cur = conn.execute(
                     "INSERT INTO media_items (downloaded_at,chat,chat_type,chat_name,"
                     "wxid,sender_name,kind,orig_name,hash_name,sha256,ext,size,rel_path,dedup,"
-                    "tier,width,height,sent_at,via) "
+                    "tier,width,height,sent_at,via,local_id) "
                     "VALUES (:downloaded_at,:chat,:chat_type,:chat_name,:wxid,:sender_name,"
                     ":kind,:orig_name,:hash_name,:sha256,:ext,:size,:rel_path,:dedup,"
-                    ":tier,:width,:height,:sent_at,:via)", rec)
+                    ":tier,:width,:height,:sent_at,:via,:local_id)", rec)
                 row_id = cur.lastrowid
                 conn.commit()
             finally:

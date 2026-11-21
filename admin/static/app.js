@@ -951,9 +951,14 @@
           ? '<span class="media-quote-badge" title="引用消息里的图片">引用</span>' : '';
         var timeTitle = (r.via === 'quote' && r.sent_time)
           ? ' title="引用发送时间：' + esc(r.sent_time) + '"' : '';
+        // localID：直发媒体=本体消息；引用图=被引用图片。0（老数据/异常）显示占位
+        var localIdCell = r.local_id
+          ? '<span class="media-local-id" title="微信 localID">' + esc(r.local_id) + '</span>'
+          : '<span class="muted">—</span>';
         return '<tr>' +
           '<td class="cell-time"' + timeTitle + '>' + esc(r.download_time) + '</td>' +
           '<td class="media-scene-cell"><span class="chat-chip">' + esc(scene) + '</span>' + quoteBadge + '</td>' +
+          '<td class="media-local-id-cell">' + localIdCell + '</td>' +
           '<td class="media-cell-wide">' + chatCell + '</td>' +
           '<td class="media-cell-wide">' + senderCell + '</td>' +
           '<td>' + kindTag + quality + '</td>' +
@@ -961,7 +966,7 @@
           '<td class="muted" title="' + esc(r.sha256 || '') + '">' + esc((r.hash_name || '').slice(0, 20)) + '…</td>' +
           '<td class="muted media-size-cell">' + fmtBytes(r.size) + '</td>' +
           '<td>' + status + (r.dedup ? '<div class="muted">哈希去重</div>' : '') + '</td></tr>';
-      }).join('') : emptyRow(9, '没有符合条件的图片 / 文件');
+      }).join('') : emptyRow(10, '没有符合条件的图片 / 文件');
     }).catch(fail);
   }
   function resetMediaFilters() {

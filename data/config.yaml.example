@@ -118,6 +118,9 @@ brain:
 # ---------------------------------------------------------------- 语音识别
 voice:
   enabled: true
+  # asr  = 识别成文字后走正常问答（默认，需下面的 ASR 配置）
+  # reply = 不识别、不调大模型，收到语音直接回 fallback_reply 这句固定话术
+  mode: "asr"
   provider: "siliconflow"                # siliconflow / dashscope / openai / custom / selfhosted
   asr_api_key: "sk-xxxx"
   asr_base_url: "http://192.0.2.207:6001/asr"   # provider=selfhosted 时的完整端点
@@ -129,7 +132,9 @@ voice:
   transcode: true
   mp3_bitrate: "32k"
   ffmpeg_path: "ffmpeg"
-  # 语音统一走「识别成文字 → 正常问答」；识别失败（或未装 pilk 解不出 SILK）时回下面这句。
+  # mode=reply 时收到语音直接回这句固定话术（不识别、不调大模型）。
+  fallback_reply: "不好意思，我这边暂时听不了语音，麻烦您打字发一下～"
+  # mode=asr 时识别失败（或未装 pilk 解不出 SILK）回这句。
   failed_reply: "抱歉，这条语音没听清，麻烦您再发一次或者直接打字～"
   # iOS 微信语音是 SILK_V3，可选装 `pip install pilk` 让服务端先解码成 WAV；
   # 未安装时会尝试 ffmpeg 直解，仍失败则回 failed_reply。

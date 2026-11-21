@@ -14,6 +14,7 @@
   iOS 插件 → POST /webhook → 归一化/去重/策略判定
     → 文本·引用回复·语音(ASR) 交给 brain 混合检索 + LLM
     → 只检索该策略包含的知识库文档 → POST /api/send/text 回微信
+  · 语音 voice.mode=reply → 不识别，直接回 fallback_reply 固定话术
   · 图片/视频 → 直接回「暂不支持」
   · 自己发出的消息（outgoing / direction=out）→ 忽略，防自问自答
 """
@@ -964,6 +965,16 @@ def _stage_media(m):
             log.warning("引用图片存储异常（已忽略）: %s", e)
 
 
+def _voice_mode():
+    """归一化语音处理模式：asr=识别后智能应答（默认）；reply=只回固定话术。
+
+    缺失或非法值一律回退 asr，保持既有行为；strip+lower 容忍配置里的大小写与空格，
+    与 voice.resolve_asr 对 provider 的处理风格一致。
+    """
+    mode = str(VCFG.get("mode") or "asr").strip().lower()
+    return mode if mode in ("asr", "reply") else "asr"
+
+
 def _stage_asr(m):
     """下载 SILK 语音并识别，返回 (识别文本, 是否识别失败)。"""
     asr_text = ""
@@ -1164,6 +1175,19 @@ def _handle_message(m, ctx=None):
             return
         if not VCFG.get("enabled", True):
             _skip(m, match, "语音处理已关闭")
+            return
+        # reply 模式：不下载、不识别，直接回固定话术，跳过后续策略/知识库/大模型。
+        # 在 basic_allowed 与 enabled 之后拦截，保持二者的优先级不变。
+        if _voice_mode() == "reply":
+            reply = str(VCFG.get("fallback_reply") or
+                        "不好意思，我这边暂时听不了语音，麻烦您打字发一下～")
+            try:
+                _send_text(m, match, reply)
+                _event(m, match, kind="reply", answer=reply,
+                       reason="语音 reply 模式（固定话术）", ms=0)
+            except Exception as e:
+                log.warning("语音 reply 模式回复发送失败: %s", e)
+            log.info("语音 reply 模式 | 已回固定话术 | %s", _brief(reply))
             return
         asr_text, asr_failed = _stage_asr(m)
 

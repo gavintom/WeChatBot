@@ -706,15 +706,70 @@ def _build_where(chat=None, chat_name=None, wxid=None, kind=None,
     return where, args
 
 
-def _decorate_row(r):
-    """补可读字段：磁盘路径 / 是否可预览 / 时间串 / 画质标签 / 分辨率。"""
+def _abs_path(r):
+    """由记录行还原磁盘绝对路径；rel_path 为空返回 ''。
+
+    rel_path 首段是落盘目录名（images/files），映射回配置目录（兼容自定义
+    目录与 Docker 内 /app/data）。抽成公共函数供 _decorate_row 与按 localID
+    查找复用，避免路径还原逻辑出现两份。
+    """
     rel = str(r.get("rel_path") or "").replace("\\", "/")
+    if not rel:
+        return ""
     if "/" in rel:
         prefix, _ = rel.split("/", 1)
-        base_dir = _root_for_rel(prefix, r["kind"])
+        base_dir = _root_for_rel(prefix, r.get("kind"))
     else:
-        base_dir = _dir_for(r["kind"])
-    path = os.path.join(base_dir, os.path.basename(rel)) if rel else ""
+        base_dir = _dir_for(r.get("kind"))
+    return os.path.join(base_dir, os.path.basename(rel))
+
+
+def find_local_media(chat, local_id, kind=None, wxid=None, log=None):
+    """按「会话 + 微信 localID」找本地已落库且文件仍在的媒体，供引用消息复用。
+
+    beta9 起 media_items.local_id 保存了：直发=本体消息 localID；引用图=被引用
+    图片的 localID。引用消息带来的 localID 正好能对上后者，因此可先用它查本地，
+    命中就直接读盘，免去再次从手机下载。
+
+    返回 (path, row)；未命中 / 文件已过期被清理 / 类型不符 → (None, None)。
+    kind / wxid 为可选精确过滤：kind=image|file，wxid=发送者。多条命中取最新一条
+    （画质升级会原地更新同一条，正常只有一条）。
+    """
+    if not chat or not local_id:
+        return None, None
+    where = ["chat=?", "local_id=?", "local_id>0"]
+    args = [str(chat), int(local_id)]
+    if kind in ("image", "file"):
+        where.append("kind=?")
+        args.append(kind)
+    if wxid:
+        where.append("wxid=?")
+        args.append(str(wxid))
+    try:
+        with _LOCK:
+            conn = _connect()
+            try:
+                _ensure(conn)
+                row = conn.execute(
+                    "SELECT * FROM media_items WHERE " + " AND ".join(where) +
+                    " ORDER BY downloaded_at DESC LIMIT 1", args).fetchone()
+            finally:
+                conn.close()
+    except Exception as e:
+        (log or (lambda *a, **kw: None))("本地媒体查找失败（忽略，回退下载）: %s", e)
+        return None, None
+    if not row:
+        return None, None
+    d = dict(row)
+    path = _abs_path(d)
+    if not path or not os.path.isfile(path):
+        return None, None          # 文件已过期清理 → 当作没命中
+    return path, d
+
+
+def _decorate_row(r):
+    """补可读字段：磁盘路径 / 是否可预览 / 时间串 / 画质标签 / 分辨率。"""
+    path = _abs_path(r)
     r["path"] = path if path and os.path.isfile(path) else ""
     r["available"] = bool(r["path"])
     r["download_time"] = datetime.fromtimestamp(r["downloaded_at"]).strftime(

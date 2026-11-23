@@ -968,13 +968,17 @@ def _stage_media(m):
 
 
 def _quote_attachments(m):
-    """从引用消息的 quoteResolved 下载被引用的图片/文件，构建多模态附件。
+    """构建引用消息里的图片/文件附件，供多模态大模型随正文一起读。
 
-    只处理「本条是引用消息且插件给了可用的 quoteResolved」——它带 localID /
-    mediaApi / quoteType，是唯一可靠的下载地址来源（不回查历史）。
+    来源优先级（beta10 调整）：
+      1) 本地媒体库：beta9 起 media_items.local_id 已保存被引用图片的 localID，
+         先用「会话 + localID + 类型」查本地已落库文件，命中就直接读盘——快，
+         免去再次从手机下载，且不受插件下载档位影响。
+      2) 手机下载：本地没记录（如引用了历史消息、文件尚未落库）才回退到
+         quoteResolved 的 localID 走 WX.media / WX.file 下载。
 
-    返回 list[{kind, name, data_url}]；下载失败 / 无引用 / 无地址一律返回空，
-    绝不影响主链路（图片本体已由 _stage_media 落库，原始消息已由 chatlog 归档）。
+    只处理「本条是引用消息且插件给了可用的 quoteResolved」；返回
+    list[{kind, name, data_url, source}]。任何失败都静默返回空，绝不影响主链路。
     """
     if str(m.get("app_type") or "").lower() != "quote":
         return []
@@ -990,30 +994,69 @@ def _quote_attachments(m):
     except (TypeError, ValueError):
         qtype = 0
 
-    # 图片：优先普通档位地址（剥掉 hd=1），复用 media 接口；文件走 file 接口
     def _to_data_url(raw, ext, fallback_mime):
         mime = mimetypes.guess_type("x." + str(ext or ""))[0] or fallback_mime
         b64 = base64.b64encode(raw).decode("ascii")
         return "data:%s;base64,%s" % (mime, b64)
 
+    def _from_local(kind):
+        """查本地媒体库；命中返回 (raw, ext, name, path)，否则 None。"""
+        try:
+            path, row = media_store.find_local_media(chat, local_id, kind=kind, log=log.info)
+        except Exception as e:
+            log.warning("引用媒体查本地失败（回退手机下载）: %s", e)
+            return None
+        if not path:
+            return None
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            if not raw:
+                return None
+            name = str(row.get("orig_name") or "")
+            return raw, str(row.get("ext") or ""), name, path
+        except Exception as e:
+            log.warning("引用媒体读本地文件失败（回退手机下载）: %s", e)
+            return None
+
     out = []
     try:
         if qtype == 3:                       # 被引用的是图片
-            api = str(qr.get("mediaApi") or "")
-            # 普通档位：去掉 hd=1 参数（HD 地址常需额外鉴权，且体积更大）
-            api = re.sub(r"([?&])hd=1&?", lambda mm: mm.group(1) if mm.group(1) == "&" else "", api)
-            raw, ext = WX.media(api or m.get("media_api"), chat, local_id)
-            if raw:
-                out.append({"kind": "image", "name": "quote_image." + (ext or "jpg"),
-                            "data_url": _to_data_url(raw, ext, "image/jpeg")})
+            hit = _from_local("image")
+            if hit:
+                raw, ext, name, path = hit
+                out.append({"kind": "image",
+                            "name": name or ("quote_image." + (ext or "jpg")),
+                            "data_url": _to_data_url(raw, ext, "image/jpeg"),
+                            "source": "local"})
+                log.info("引用图片命中本地 | chat=%s localID=%s | %s", chat, local_id, path)
+            else:
+                api = str(qr.get("mediaApi") or "")
+                # 普通档位：去掉 hd=1 参数（HD 地址常需额外鉴权，且体积更大）
+                api = re.sub(r"([?&])hd=1&?", lambda mm: mm.group(1) if mm.group(1) == "&" else "", api)
+                raw, ext = WX.media(api or m.get("media_api"), chat, local_id)
+                if raw:
+                    out.append({"kind": "image", "name": "quote_image." + (ext or "jpg"),
+                                "data_url": _to_data_url(raw, ext, "image/jpeg"),
+                                "source": "phone"})
+                    log.info("引用图片回退手机下载 | chat=%s localID=%s", chat, local_id)
         elif qtype == 49:                    # 被引用的是文件（appmsg）
-            raw, ext = WX.file(chat, local_id)
-            if raw:
-                quote = m.get("quote") or {}
-                name = str(qr.get("fileName") or quote.get("title") or
-                           ("quote_file." + (ext or "bin")))
-                out.append({"kind": "file", "name": name,
-                            "data_url": _to_data_url(raw, ext, "application/octet-stream")})
+            hit = _from_local("file")
+            quote = m.get("quote") or {}
+            fallback_name = str(qr.get("fileName") or quote.get("title") or "quote_file.bin")
+            if hit:
+                raw, ext, name, path = hit
+                out.append({"kind": "file", "name": name or fallback_name,
+                            "data_url": _to_data_url(raw, ext, "application/octet-stream"),
+                            "source": "local"})
+                log.info("引用文件命中本地 | chat=%s localID=%s | %s", chat, local_id, path)
+            else:
+                raw, ext = WX.file(chat, local_id)
+                if raw:
+                    out.append({"kind": "file", "name": fallback_name,
+                                "data_url": _to_data_url(raw, ext, "application/octet-stream"),
+                                "source": "phone"})
+                    log.info("引用文件回退手机下载 | chat=%s localID=%s", chat, local_id)
         else:
             return []
     except Exception as e:

@@ -1,9 +1,9 @@
 # 个人微信智能客服 · Docker 镜像
 #
-# 推荐：直接拉取发布镜像 docker pull gavintom/wechatbot:1.1.0
+# 推荐：直接拉取发布镜像 docker pull gavintom/wechatbot:1.1.2
 # 运行： docker run -d --name wxbot -p 7780:7780 -p 29999:29999 \
-#          -v wxbot-data:/app/data gavintom/wechatbot:1.1.0
-# 从源码构建（可选）： docker build -t gavintom/wechatbot:1.1.0 .
+#          -v wxbot-data:/app/data gavintom/wechatbot:1.1.2
+# 从源码构建（可选）： docker build -t gavintom/wechatbot:1.1.2 .
 #
 # 所有可变数据（配置 / 数据库 / 日志 / 备份 / 知识库文档）都在 /app/data，
 # 挂一个卷即可完整持久化，镜像本身不含任何密钥。

@@ -203,13 +203,13 @@ python -m admin.app
 
 ```bash
 # 直接拉取官方镜像，无需本地打包
-docker pull gavintom/wechatbot:1.1.0
+docker pull gavintom/wechatbot:1.1.2
 
 # 运行：只挂一个卷
 docker run -d --name wxbot \
   -p 7780:7780 -p 29999:29999 \
   -v wxbot-data:/app/data \
-  --restart unless-stopped gavintom/wechatbot:1.1.0
+  --restart unless-stopped gavintom/wechatbot:1.1.2
 
 # 查看日志 / 升级
 docker logs -f wxbot

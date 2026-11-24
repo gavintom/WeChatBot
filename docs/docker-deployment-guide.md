@@ -1,7 +1,7 @@
 # WeChatBot · Docker 部署详细指南
 
-> 适用版本：**V1.1.0**（`admin/app.py` 的 `APP_VERSION`）
-> 官方镜像：`gavintom/wechatbot:1.1.0` · 体积约 **2.37 GB**（以镜像仓库显示为准）
+> 适用版本：**V1.1.2**（`admin/web.py` 的 `APP_VERSION`）
+> 官方镜像：`gavintom/wechatbot:1.1.2` · 体积约 **2.37 GB**（以镜像仓库显示为准）
 > 与仓库根目录 [`deploy.md`](../deploy.md) 互补，本文偏「照着做」。
 > 文中 `192.0.2.x` 与 `/opt/wxbot/data` 均为示例地址（RFC 5737 文档网段 / 示例目录），部署时请换成实际 IP 与路径。
 
@@ -16,7 +16,7 @@
 | 3 | **镜像不含业务知识库文档** | `.dockerignore` 排除了 `data/knowledge/*.md` / `*.txt`。首次启动自带 **`README.md` 一条初始文档**（自动入库并建索引）；其余业务文档必须自行导入，否则 AI 检索不到你的业务内容。 |
 | 4 | **手机要能主动访问服务器** | webhook 是手机插件 POST 到 `29999`，不是服务器去连手机；两者必须网络互通，且 `server.public_base_url` 要填手机能到达的地址。 |
 | 5 | **首次启动有预热** | 内置权重模型首次建索引约 40~90 秒，期间 `/healthz` 可能较慢；管理端 `/login` 通常几秒内即可访问。属正常现象，不要反复重启。 |
-| 6 | **直接拉官方镜像，不用打包** | `docker pull gavintom/wechatbot:1.1.0` 即可启动；`docker build` 只在你改了源码或要精简依赖时才需要（见 §3.1）。 |
+| 6 | **直接拉官方镜像，不用打包** | `docker pull gavintom/wechatbot:1.1.2` 即可启动；`docker build` 只在你改了源码或要精简依赖时才需要（见 §3.1）。 |
 
 ---
 
@@ -86,7 +86,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18888/api/health   # �
 推荐直接用发布镜像，**跳过 `docker build`**：
 
 ```bash
-docker pull gavintom/wechatbot:1.1.0
+docker pull gavintom/wechatbot:1.1.2
 ```
 
 确认拉取结果；也可以顺手验证镜像内关键依赖与离线模型：
@@ -94,11 +94,11 @@ docker pull gavintom/wechatbot:1.1.0
 ```bash
 docker images gavintom/wechatbot --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}} {{.CreatedSince}}"
 
-docker run --rm --entrypoint python gavintom/wechatbot:1.1.0 -c \
+docker run --rm --entrypoint python gavintom/wechatbot:1.1.2 -c \
   "import pilk, flask, rank_bm25; import os; print('OK'); print('model:', os.path.isfile('models/bge-base-zh-v1.5/config.json'))"
 ```
 
-> 不带 tag 默认取 `latest`；生产环境建议固定到 `1.1.0` 这类明确版本，升级时只改 tag。
+> 不带 tag 默认取 `latest`；生产环境建议固定到 `1.1.2` 这类明确版本，升级时只改 tag。
 > 镜像已内置权重模型，运行期无需下载；只有自行下载重排模型时国内才需要
 > `-e HF_ENDPOINT=https://hf-mirror.com`。
 
@@ -114,10 +114,10 @@ git clone <你的仓库地址>.git
 cd <仓库目录>
 
 # 默认镜像：含 CPU-only torch + sentence-transformers + 本地 models/ 权重
-docker build -t gavintom/wechatbot:1.1.0 .
+docker build -t gavintom/wechatbot:1.1.2 .
 
 # 精简镜像（纯 BM25，不装 torch）
-docker build --build-arg INSTALL_VECTOR=0 -t gavintom/wechatbot:1.1.0-bm25 .
+docker build --build-arg INSTALL_VECTOR=0 -t gavintom/wechatbot:1.1.2-bm25 .
 ```
 
 精简镜像下 `brain.py` 对缺失依赖有兜底，会自动降级、不会启动失败；但**配置模板仍默认开启向量**，
@@ -137,7 +137,7 @@ brain:
 docker build \
   --build-arg HTTP_PROXY=http://192.0.2.2:7890 \
   --build-arg HTTPS_PROXY=http://192.0.2.2:7890 \
-  -t gavintom/wechatbot:1.1.0 .
+  -t gavintom/wechatbot:1.1.2 .
 ```
 
 ---
@@ -151,7 +151,7 @@ docker run -d --name wxbot \
   --restart unless-stopped \
   -p 7780:7780 -p 29999:29999 \
   -v wxbot-data:/app/data \
-  gavintom/wechatbot:1.1.0
+  gavintom/wechatbot:1.1.2
 ```
 
 ### 4.2 方案 B：绑定宿主机目录（本机开发 / 本项目当前 Windows 部署方式）
@@ -162,14 +162,14 @@ docker run -d --name wxbot \
   --restart unless-stopped \
   -p 7780:7780 -p 29999:29999 \
   -v "C:/opt/wxbot/data:/app/data" \
-  gavintom/wechatbot:1.1.0
+  gavintom/wechatbot:1.1.2
 
 # Linux / macOS
 docker run -d --name wxbot \
   --restart unless-stopped \
   -p 7780:7780 -p 29999:29999 \
   -v "/opt/wxbot/data:/app/data" \
-  gavintom/wechatbot:1.1.0
+  gavintom/wechatbot:1.1.2
 ```
 
 > Windows PowerShell 里路径写成 `C:\opt\wxbot\data:/app/data` 亦可；若用 Git Bash，请用上面的正斜杠写法并保留引号。
@@ -193,7 +193,7 @@ docker run -d --name wxbot \
 | `-p 7780:7780` | Web 管理端 |
 | `-p 29999:29999` | 主服务：`/webhook`、`/healthz`、`/httpapi/query` |
 | `-v ...:/app/data` | 唯一持久化点，**不要改成子目录挂载** |
-| `gavintom/wechatbot:1.1.0` | 官方发布镜像，从 Docker Hub 拉取 |
+| `gavintom/wechatbot:1.1.2` | 官方发布镜像，从 Docker Hub 拉取 |
 
 ### 4.5 entrypoint 首次启动会做什么
 
@@ -341,10 +341,10 @@ docker cp ./常见问题.md   wxbot:/app/data/knowledge/
 
 ```bash
 # 0) 先备份数据卷（见 §8），并给当前镜像留个本地回滚标签
-docker tag gavintom/wechatbot:1.1.0 wechatbot:backup-$(date +%Y%m%d)
+docker tag gavintom/wechatbot:1.1.2 wechatbot:backup-$(date +%Y%m%d)
 
 # 1) 拉取新版本（下载期间旧容器照常服务）
-NEW_TAG=1.1.1        # 换成要升级的版本号
+NEW_TAG=1.1.2        # 换成要升级的版本号
 docker pull gavintom/wechatbot:$NEW_TAG
 
 # 2) 停旧容器，用完全相同的参数启动新版本
@@ -382,7 +382,7 @@ docker run -d --name wxbot --restart unless-stopped \
   wechatbot:backup-YYYYMMDD      # 换成 §7.1 留下的本地备份标签
 ```
 
-也可以直接拉旧版本 tag 回滚：`docker pull gavintom/wechatbot:1.1.0` 后用 `1.1.0` 启动。
+也可以直接拉旧版本 tag 回滚：`docker pull gavintom/wechatbot:1.1.2` 后用 `1.1.2` 启动。
 
 若数据库结构在升级中发生过变更，回滚镜像前先确认旧版本能否读新库；本项目的 `store.init_db()` 是幂等补列设计，兼容方向通常安全，但**生产环境仍建议先恢复数据卷备份**（见 §8）。
 
@@ -492,7 +492,7 @@ HTTPS 场景给容器加环境变量：
 ```yaml
 services:
   wxbot:
-    image: gavintom/wechatbot:1.1.0
+    image: gavintom/wechatbot:1.1.2
     container_name: wxbot
     restart: unless-stopped
     ports:
@@ -540,7 +540,7 @@ volumes:
 
 ## 11. 部署验收清单
 
-- [ ] 镜像来自 `gavintom/wechatbot:1.1.0`（`docker inspect wxbot --format '{{.Config.Image}}'`），未在本地打包
+- [ ] 镜像来自 `gavintom/wechatbot:1.1.2`（`docker inspect wxbot --format '{{.Config.Image}}'`），未在本地打包
 - [ ] `docker ps` 显示 `wxbot` 为 `Up`，端口 `7780`、`29999` 均已映射，重启策略 `unless-stopped`
 - [ ] `docker inspect wxbot` 的挂载是 `/app/data`，且卷内存在 `config.yaml`、`analytics.db`、`chatlog.db`、`knowledge/`、`plugins/`
 - [ ] `/login` 返回 200，`/healthz` 返回 200 且插件在线、检索器就绪

@@ -5,11 +5,16 @@
 
 - **官网**：<https://wxbottweak.kdns.fr>
 - **Docker 镜像**：`gavintom/wechatbot`
-- **当前源码版本**：**V1.1.2-beta10**（开发中，基于 V1.1.1 正式版；Docker Hub 稳定版仍为 `1.1.0`）
+- **当前源码版本**：**V1.1.2**（正式版；Docker Hub 镜像 `gavintom/wechatbot:1.1.2`）
 - **许可证**：MIT · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![WeChatBot 官网预览](docs/images/website-screenshot.jpg)
 
+> **V1.1.2 正式版**：在 1.1.1 基础上补齐企微联系人、群聊/私聊分场景与规则级选模型、
+> 模型配置导出导入、大模型多模态能力位与 token 上限、语音 reply 模式、引用媒体本地优先
+> 上传等能力，并修复对话记录时间列拥挤、静态资源缓存串不统一等问题。以下保留各 beta
+> 阶段的细化记录。
+>
 > **V1.1.2-beta10 更新要点**：**引用媒体改为「本地优先」**。引用消息带图/文件时，
 > 先用「会话 + localID + 类型」查本地媒体库，命中就直接读本地文件转 data URL 随正文上传
 > （更快、免去重复从手机下载）；本地无记录或文件已过期才回退从手机下载。附件带 `source`
